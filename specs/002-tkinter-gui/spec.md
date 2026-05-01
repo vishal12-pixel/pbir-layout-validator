@@ -5,6 +5,17 @@
 **Status**: Draft
 **Input**: User description: "Add an optional Tkinter-based desktop GUI to pbir_validator. The user picks either a .pbip file or a .Report folder via Browse buttons (auto-detect). The window offers three actions — Learn, Validate, Fix — and renders results in scrollable panes. Learn mode optionally opens conf.md in the system editor or shows a page dropdown. Validate renders gap/row/h-spacing tables. Fix runs as a dry-run first, exposing each planned Shift as a checkbox so users can opt-out of intentional offsets before applying. Stdlib-only (tkinter); CLI remains the primary interface."
 
+## Clarifications
+
+### Session 2026-05-01
+
+- Q: How should the GUI be launched? → A: Separate console script entry point `pbir_validator-gui` (pip auto-generates a Windows `.exe` launcher in `Scripts\` so users can double-click or pin a Desktop shortcut).
+- Q: Threading model for long-running operations? → A: One background `threading.Thread` per action; the worker pushes results/progress into a `queue.Queue` that the Tk main loop drains via `root.after(0, ...)`. No locks needed because analyzer/validator/fixer modules operate on frozen dataclasses with no shared mutable state.
+- Q: Where do result tables live in the window? → A: Tabbed notebook (`ttk.Notebook`) inside the main window with one tab per result type (Gap Violations, Misalignments, H-Spacing, Fix Plan). Selecting an action switches focus to its tab; previous results remain visible on other tabs for comparison.
+- Q: Should there be an export button? → A: Yes — each result tab has its own “Export…” button that saves the visible table to a user-chosen file. Default format CSV (opens in Excel directly); JSON also offered in the file-type dropdown.
+- Q: What should the Fix tab show after Apply succeeds? → A: Auto-rerun Validate; the three Validate tabs refresh with the new state and the Fix Plan tab shows “X applied, Y skipped, Z remaining (re-run Fix)” so the user sees the violation count drop in the same window.
+
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Validate a report and review issues visually (Priority: P1)
@@ -77,7 +88,7 @@ After reviewing validation results, the user clicks **Fix**, sees the planned sh
 
 #### Launching and report selection
 
-- **FR-001**: The tool MUST expose an optional GUI launch path (a subcommand or flag on the existing CLI entry point) that opens a single main window; invoking it MUST NOT change the behavior of any existing CLI subcommand.
+- **FR-001**: The tool MUST expose the GUI through a dedicated console script entry point named `pbir_validator-gui`, declared in `pyproject.toml` so that `pip install` generates a platform-native launcher (a `pbir_validator-gui.exe` shim in `Scripts\` on Windows) that opens the main window directly without requiring the user to type `python -m`. The existing `pbir_validator` CLI subcommands MUST remain unchanged.
 - **FR-002**: The main window MUST present two Browse buttons — one for picking a `.pbip` file and one for picking a `.Report` folder — and MUST display the resolved report path once a selection is made.
 - **FR-003**: The GUI MUST auto-detect whether the user picked a `.pbip` file or a `.Report` folder and MUST resolve a `.pbip` selection to its sibling `.Report` folder using the same logic the CLI already uses (reading `artifacts[].report.path`).
 - **FR-004**: If the resolved path is not a valid PBIR report folder, the GUI MUST display an error message in the window (not a console traceback) and MUST disable the three action buttons until a valid report is selected.
@@ -97,8 +108,9 @@ After reviewing validation results, the user clicks **Fix**, sees the planned sh
 
 #### Validate mode
 
-- **FR-012**: Clicking **Validate** MUST run the existing validator against the selected report and render its findings in three independently scrollable result panes: gap-rule violations, row misalignments, and horizontal-spacing issues.
+- **FR-012**: Clicking **Validate** MUST run the existing validator against the selected report and render its findings on three tabs of a `ttk.Notebook`: **Gap Violations**, **Row Misalignments**, and **Horizontal Spacing**. The Fix dry-run results MUST appear on a fourth tab labeled **Fix Plan**. Selecting an action MUST switch focus to its corresponding tab while leaving other tabs' contents intact for cross-reference.
 - **FR-013**: Each result pane MUST present one row per finding with the fields the CLI already reports for that finding type (e.g., page, visual identifier, expected vs. actual values), and MUST clearly state "No issues found" when its category is empty.
+- **FR-013a**: Each result tab MUST include an **Export…** button that saves the tab's visible rows to a user-chosen file via a save-file dialog. The dialog MUST default to CSV (using `csv.writer` from the standard library) and MUST also offer JSON; the exported content MUST contain exactly the rows currently displayed (after any user-applied filtering) and the same column headers shown in the table.
 - **FR-014**: Validation MUST be read-only: running it MUST NOT modify any file under the report folder.
 
 #### Fix mode
@@ -107,14 +119,14 @@ After reviewing validation results, the user clicks **Fix**, sees the planned sh
 - **FR-016**: The dry-run result MUST be rendered as a scrollable checklist with one row per planned `Shift`, every row pre-checked, and each row showing enough information for the user to identify the affected visual and the proposed offset.
 - **FR-017**: The user MUST be able to uncheck any individual row to exclude that shift from being applied.
 - **FR-018**: The window MUST include an **Apply selected fixes** button that writes only the currently checked shifts to disk via the existing fixer; rows that are unchecked MUST NOT be written.
-- **FR-019**: After applying, the GUI MUST display a summary of how many shifts were applied and how many were skipped, and MUST refresh or invalidate the checklist so the same shifts cannot be applied twice in one session.
+- **FR-019**: After **Apply selected fixes** completes successfully, the GUI MUST automatically re-run the validator and refresh the three Validate tabs (Gap Violations, Row Misalignments, Horizontal Spacing) with the new state. The Fix Plan tab MUST then display a summary line of the form “*X* applied, *Y* skipped, *Z* remaining (re-run Fix)”, and the original checklist rows MUST be invalidated so the same shifts cannot be applied a second time without a fresh dry-run.
 - **FR-020**: If the dry-run produces zero shifts, the GUI MUST show "No fixes needed" and **Apply selected fixes** MUST be disabled.
 
 #### Cross-cutting
 
 - **FR-021**: The GUI MUST be implemented using only the Python standard library (specifically `tkinter` and `tkinter.ttk`); adding any new third-party runtime dependency is prohibited.
 - **FR-022**: The CLI MUST remain the primary, equally-supported interface; every GUI capability MUST already be reachable from the CLI, and removing the GUI MUST NOT break any CLI command.
-- **FR-023**: Long-running operations (Validate, Learn, Fix) MUST NOT freeze the window; the GUI MUST indicate work is in progress and MUST remain interactable enough for the user to see the progress indicator.
+- **FR-023**: Long-running operations (Validate, Learn, Fix) MUST run on a background `threading.Thread` so the Tk main loop never blocks; the worker MUST communicate results and progress to the UI through a `queue.Queue` drained on the main thread via `root.after()`. While a worker is running, the action buttons MUST be disabled and a progress indicator MUST be visible.
 - **FR-024**: Any error raised by the underlying modules MUST be displayed inside the GUI as a readable message (including the offending file path where the CLI provides one); raw Python tracebacks MUST NOT be the only feedback the user sees.
 - **FR-025**: Launching the GUI in a headless environment (no display server available) MUST fail fast with a clear message directing the user to the CLI, rather than hanging or producing a Tk error dialog the user cannot read.
 
