@@ -1,0 +1,16 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.8.0/schema.json",
+  "name": "v05_shape2",
+  "position": {
+    "x": 70,
+    "y": 372,
+    "z": 1310,
+    "height": 30,
+    "width": 50,
+    "tabOrder": 310
+  },
+  "visual": {
+    "visualType": "shape"
+  },
+  "parentGroupName": "grp1"
+}

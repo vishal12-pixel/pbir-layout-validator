@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pbir_validator"
+version = "0.1.0"
+description = "Validate and fix vertical spacing between visuals in Power BI PBIR reports."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "PBIR Layout Validator Authors" }]
+keywords = ["powerbi", "pbir", "layout", "validator"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+# Stdlib-only at runtime — no dependencies on purpose.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "pytest-cov>=4.1"]
+
+[project.scripts]
+pbir_validator = "pbir_validator.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pbir_validator*"]
+exclude = ["tests*", "specs*"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--cov=pbir_validator",
+    "--cov-report=term-missing",
+    "--cov-fail-under=80",
+]
+markers = [
+    "benchmark: opt-in performance budget tests (slow)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["pbir_validator"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
