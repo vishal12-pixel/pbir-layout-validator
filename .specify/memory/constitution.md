@@ -1,50 +1,153 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+SYNC IMPACT REPORT
+==================
+Version change: (initial) → 1.0.0
+Bump rationale: Initial ratification of project constitution (MAJOR baseline).
+
+Modified principles: N/A (initial creation)
+Added sections:
+  - Core Principles (4): Code Quality, Testing Standards, User Experience
+    Consistency, Performance Requirements
+  - Additional Constraints (Stack & Scope)
+  - Development Workflow & Quality Gates
+  - Governance
+
+Removed sections: None
+
+Templates requiring updates:
+  - ✅ .specify/templates/plan-template.md (Constitution Check section is
+        principle-agnostic and remains compatible; no edits required)
+  - ✅ .specify/templates/spec-template.md (no constitution-specific clauses;
+        compatible)
+  - ✅ .specify/templates/tasks-template.md (task categories already cover
+        setup/test/implementation; compatible — testing tasks must be
+        treated as REQUIRED for this project per Principle II)
+  - ✅ .specify/templates/checklist-template.md (generic; compatible)
+
+Follow-up TODOs: None
+-->
+
+# PBIR Layout Validator & Fixer Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Code Quality (Pythonic & Minimal)
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+Code MUST be idiomatic Python and optimized for readability over cleverness.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+- The tool MUST run on the Python standard library only. No third-party
+  runtime dependencies are permitted; `pytest` is allowed as a development-
+  only dependency.
+- Functions MUST follow single-responsibility: one function, one purpose.
+  Functions exceeding ~40 lines or mixing parsing, calculation, and I/O
+  MUST be decomposed.
+- Names MUST be explicit and domain-aligned (e.g., `compute_vertical_gap`,
+  `parse_visual_container`). Abbreviations and one-letter names are
+  prohibited outside tight local scopes.
+- Over-engineering is forbidden: no speculative abstractions, no plugin
+  frameworks, no class hierarchies where a function suffices. YAGNI is
+  enforced at review time.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+**Rationale**: PBIR validation is a focused, file-system-bound task. A
+small, dependency-free CLI is faster to install, easier to audit, and
+avoids supply-chain risk in enterprise Power BI environments.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### II. Testing Standards (NON-NEGOTIABLE)
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+All parsing and calculation logic MUST be covered by automated tests
+before merge.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+- Unit tests MUST be written with `pytest` for every function that parses
+  PBIR JSON or computes layout metrics (positions, gaps, alignments).
+- Integration tests MUST exercise the CLI end-to-end against committed
+  sample PBIR fixture data stored under `tests/fixtures/`.
+- Core logic (parsing, gap calculation, fix generation) MUST maintain
+  ≥80% line coverage. Coverage below this threshold blocks merge.
+- Bug fixes MUST add a regression test that fails before the fix and
+  passes after.
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+**Rationale**: PBIR files are structurally complex and silently break
+reports when malformed. Tests with realistic fixtures are the only
+reliable defense against shipping report-corrupting changes.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+### III. User Experience Consistency
+
+The CLI MUST present a predictable, unambiguous experience across all
+operations.
+
+- Output MUST use colored terminal status: green for success, yellow for
+  warnings, red for errors. Color MUST auto-disable when stdout is not a
+  TTY or when `NO_COLOR` is set.
+- Commands MUST follow the consistent flag structure: `--validate`,
+  `--fix`, `--learn`. New top-level operations MUST extend this pattern.
+- Error messages MUST include the offending file path and, where
+  applicable, the JSON pointer or line number, plus a one-line
+  remediation hint.
+- Any operation that mutates files MUST support `--dry-run` and MUST
+  default to a preview when `--fix` is invoked without explicit
+  confirmation (`--apply` or interactive `y/N`).
+
+**Rationale**: Users run this tool against authored reports they cannot
+afford to lose. Predictable flags, clear diagnostics, and dry-run-first
+defaults make the tool safe to use in CI and on local machines alike.
+
+### IV. Performance Requirements
+
+The CLI MUST remain fast enough for interactive use on realistic reports.
+
+- Validating a 50-page PBIR report MUST complete in under 5 seconds on a
+  developer-class laptop (measured wall-clock, warm filesystem cache).
+- JSON files MUST be opened and parsed lazily on a per-file basis.
+  Loading the entire report into memory up front is prohibited; iterate
+  pages and visuals on demand.
+- Cold CLI startup (entry point to first log line) MUST stay under
+  200 ms. Heavy imports MUST be deferred behind the subcommand that
+  needs them.
+- Performance regressions MUST be caught: a benchmark fixture exercising
+  the 50-page target MUST exist under `tests/` and be runnable via a
+  documented command.
+
+**Rationale**: Layout validation is most useful when developers run it
+repeatedly while iterating on a report. Slow startup or memory bloat
+would push it out of the inner loop.
+
+## Additional Constraints
+
+**Stack & Scope**
+
+- Language: Python 3.11+ (standard library only at runtime).
+- Packaging: Single CLI entry point exposed via `python -m pbir_validator`
+  and a console script.
+- Platform: MUST run on Windows, macOS, and Linux without code branching
+  beyond `pathlib` and `os` portability.
+- Out of scope: editing PBIX binaries, rendering reports, and network
+  calls of any kind.
+
+## Development Workflow & Quality Gates
+
+- Every change MUST pass: unit tests, integration tests, coverage
+  threshold (≥80% on core logic), and a `--dry-run` smoke test against
+  the bundled fixture report.
+- Pull requests MUST state which principle(s) the change touches and how
+  compliance was verified. Violations MUST be justified in a "Complexity
+  Tracking" section of the plan and approved before merge.
+- Any new external runtime dependency requires a constitution amendment
+  (MAJOR bump) — it is not a routine review decision.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- This constitution supersedes ad-hoc conventions. When guidance elsewhere
+  conflicts with this document, this document wins.
+- Amendments require: (1) a PR editing this file, (2) an updated Sync
+  Impact Report at the top, (3) propagation to dependent templates under
+  `.specify/templates/`, and (4) approval from a project maintainer.
+- Versioning policy (semantic):
+  - **MAJOR**: Removing a principle, redefining it incompatibly, or
+    adding a runtime dependency.
+  - **MINOR**: Adding a new principle or materially expanding an existing
+    one.
+  - **PATCH**: Wording, clarifications, or non-semantic refinements.
+- Compliance reviews: every PR reviewer MUST verify the change against
+  the Core Principles checklist before approval.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-05-01 | **Last Amended**: 2026-05-01
