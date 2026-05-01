@@ -137,6 +137,52 @@ Reported separately so it does not affect the validate exit code.
 | `to_type` | `str` | |
 | `actual_px` | `float` | Recorded for the developer's reference. |
 
+## Entity: `Misalignment`
+
+An intra-row Y drift: a visual whose `y` differs from the row's modal `y` by more than
+`DEFAULT_ALIGNMENT_TOLERANCE_PX` (0.5 px). Produced by `analyzer.find_row_misalignments`
+and surfaced by `validator.validate_report`.
+
+| Field | Type | Notes |
+|---|---|---|
+| `page_id` | `str` | |
+| `page_display_name` | `str` | For tabular output. |
+| `visual_id` | `str` | The drifting visual. |
+| `visual_type` | `str` | |
+| `actual_y` | `float` | The visual's own `y`. |
+| `expected_y` | `float` | Row's modal `y` (most-frequent rounded `y`, ties → smallest). |
+| `deviation_px` | `float` | `actual_y - expected_y` (signed). |
+| `row_index` | `int` | Index of the row on the page (top-to-bottom). |
+| `path` | `pathlib.Path` | The visual's `visual.json` path; used by `fixer` to apply the Y delta. |
+
+**Lifecycle**: `validator` returns these alongside `Violation`. `fixer.plan_fixes` pre-applies
+each misalignment delta to its visual before computing adjacent-row gap shifts, so that
+row-gap fixes are layered on top of an aligned baseline.
+
+## Entity: `HSpacingIssue`
+
+An inconsistent horizontal gap between two same-type peers in a row of three or more such
+peers. Produced by `analyzer.find_row_hspacing_issues`. Detection only in v1 (no auto-fix).
+
+| Field | Type | Notes |
+|---|---|---|
+| `page_id` | `str` | |
+| `page_display_name` | `str` | For tabular output. |
+| `visual_type` | `str` | The shared type of the peers in the row bucket. |
+| `left_visual_id` | `str` | Left peer of the offending gap. |
+| `right_visual_id` | `str` | Right peer of the offending gap. |
+| `expected_gap_px` | `float` | Row's modal horizontal gap (rounded to nearest int, ties → smallest). |
+| `actual_gap_px` | `float` | `right.x - (left.x + left.width)`. |
+| `deviation_px` | `float` | `actual_gap_px - expected_gap_px` (signed). |
+| `row_index` | `int` | Index of the row on the page. |
+
+**Algorithm** (in `analyzer.find_row_hspacing_issues`)
+
+- For each `Row`, bucket visuals by `visual_type`.
+- For each bucket with **≥3** peers, sort by `x` and compute consecutive gaps.
+- The **modal** rounded gap is the row's expected horizontal gap.
+- Any gap deviating by more than `DEFAULT_HSPACING_TOLERANCE_PX` (0.5 px) is reported.
+
 ## Entity: `Shift` (fix-mode plan record)
 
 | Field | Type | Notes |
@@ -158,10 +204,11 @@ touched. In apply mode, `writer.write_shifts(shifts)` performs atomic per-file w
 Report (1) ──< Page (N) ──< Visual (N)
                 Page    ──> Row (N, derived)        ──< Visual (N, by membership)
                 Row[i]  ──> gap with Row[i+1]       ──> Violation (when gap ≠ rule)
+                Row     ──> Misalignment (N)        (visuals whose y drifts from row mode)
+                Row     ──> HSpacingIssue (N)       (uneven gap among ≥3 same-type peers)
 GapRule (N, from conf.md) ──> matches (from_type, to_type) of an adjacent row pair
-Violation ──> Shift (N) when fix mode plans correction
-            ──> at least one shift on the lower row; may include sibling rows below;
-                may include group members via parent_group_name
+Violation     ──> Shift (N) when fix mode plans correction
+Misalignment  ──> Shift (1) pre-applied before row-gap shifts so corrections layer cleanly
 ```
 
 ## State Transitions

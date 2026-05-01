@@ -17,6 +17,19 @@ only at runtime; ANSI escape codes for color; atomic write-then-rename for safe 
 lazy per-page iteration to satisfy the 50-page <5 s performance bar. Distributed as a
 single-file Windows `.exe` via PyInstaller (build-time only).
 
+Beyond adjacent-row gap rules, `analyzer` also performs two intra-row analyses that need
+no `conf.md` rules: **row misalignment** detection (`find_row_misalignments`, modal-Y
+reference, 0.5 px tolerance) and **horizontal-spacing** detection
+(`find_row_hspacing_issues`, modal-gap reference among ≥3 same-type peers, 0.5 px
+tolerance). To prevent false positives from bookmark-driven alternate visuals stacked at
+the same canvas position, all analyses run on a deduplicated visual set produced by
+`dedupe_stacked_visuals` (≥50 % horizontal overlap + Y delta < 50 % of min height).
+`validator.validate_report` returns a 4-tuple
+`(violations, unknowns, misalignments, hspacing_issues)`; misalignments and h-spacing
+issues each get their own table in CLI output and contribute to the non-zero exit code.
+`fixer` auto-corrects gap violations and pre-applies misalignment deltas; horizontal-
+spacing auto-fix is deferred.
+
 ## Technical Context
 
 **Language/Version**: Python 3.11+ (per constitution; uses `match`, `pathlib`, dataclasses, type hints)
@@ -76,7 +89,7 @@ pbib validator tool/
 │   ├── models.py                    # Frozen dataclasses: Visual, Page, Report, GapRule, Violation, Row, Shift
 │   ├── reader.py                    # Lazy load PBIR folder → iter_pages() / iter_visuals()
 │   ├── writer.py                    # Atomic write of modified visual.json (preserve fields & key order)
-│   ├── analyzer.py                  # Row grouping (±2px tolerance), gap computation, type-label resolution
+│   ├── analyzer.py                  # Row grouping (±2px), gap computation, dedupe_stacked_visuals, find_row_misalignments, find_row_hspacing_issues
 │   ├── validator.py                 # Validate mode: compare gaps to rules, build Violation list
 │   ├── fixer.py                     # Fix mode: plan & apply Y-coordinate shifts (with dry-run)
 │   ├── learner.py                   # Learn mode: page picker → conf.md generator

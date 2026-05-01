@@ -119,6 +119,10 @@ A team lead maintains one canonical `conf.md` that captures the team's spacing s
 - **FR-017**: The tool MUST report violations as a single tabular block whose columns are: page name, from visual type, to visual type, expected gap (px), actual gap (px), and deviation (px, signed).
 - **FR-018**: The tool MUST report visual-type pairs that have no rule in `conf.md` separately as warnings (not violations) and MUST NOT count them in the failure exit code.
 - **FR-019**: Validate mode MUST NOT modify any file in the report folder under any circumstances.
+- **FR-026**: For every page, the tool MUST detect intra-row Y misalignments — visuals whose Y coordinate drifts from the row's modal Y by more than 0.5 pixels — and MUST report each such visual as a row misalignment with page name, visual type, visual identifier, expected Y, actual Y, and signed deviation.
+- **FR-027**: For every page, when a row contains three or more visuals of the same `visual.visualType`, the tool MUST compute the consecutive horizontal gaps between those peers (sorted by X) and MUST report any gap that deviates from the row's modal horizontal gap by more than 0.5 pixels as a horizontal-spacing issue with page name, visual type, left and right visual identifiers, expected gap, actual gap, and signed deviation.
+- **FR-028**: Row misalignments and horizontal-spacing issues MUST contribute to the validate-mode non-zero exit code (treated as violations for exit-code purposes) and MUST be rendered as their own tabular blocks separate from the adjacent-row gap violations table.
+- **FR-029**: Same-type visuals stacked at substantially the same position (≥50 % horizontal-bounding-box overlap and Y delta < 50 % of the smaller visual's height) MUST be treated as a single visual for row grouping, gap computation, misalignment detection, and horizontal-spacing detection — preventing false positives from bookmark-driven alternate visuals.
 
 #### Fix mode
 
@@ -138,6 +142,8 @@ A team lead maintains one canonical `conf.md` that captures the team's spacing s
 - **Spacing rule**: A triple of (from-type, to-type, expected gap in pixels) describing the required vertical gap between two adjacent rows of the named visual types.
 - **`conf.md` rules file**: A human-readable Markdown file containing the full set of spacing rules learned from a reference page or hand-edited by a developer. Default location is alongside the report; can be overridden via CLI.
 - **Violation**: A computed mismatch between an actual adjacent-row gap on some page and the expected gap from the matching rule. Carries page name, from-type, to-type, expected, actual, deviation.
+- **Misalignment**: A visual whose Y coordinate differs from the modal Y of its row peers by more than the alignment tolerance. Carries page name, visual type, visual identifier, expected Y (row modal), actual Y, and signed deviation.
+- **Horizontal-spacing issue**: An inconsistent horizontal gap between two same-type peers within a row of three or more such peers, where the gap deviates from the row's modal horizontal gap. Carries page name, visual type, left and right visual identifiers, expected gap, actual gap, and signed deviation.
 
 ## Success Criteria *(mandatory)*
 
@@ -162,4 +168,6 @@ A team lead maintains one canonical `conf.md` that captures the team's spacing s
 - When a reference page contains conflicting gaps for the same visual-type pair, the canonical value chosen for the rule is the **most frequent** value (ties broken by the smallest gap), and the inconsistency is surfaced as a warning during learn mode.
 - Colored output uses ANSI escape codes; on terminals where ANSI is not supported the tool prints plain text with no fallback library required.
 - The tool runs locally on the developer's machine; no network access, telemetry, or cloud service is required or attempted.
-- Out of scope for this spec (deferred to a future feature): auto-positioning of new visuals from scratch, horizontal spacing validation, and any graphical user interface.
+- Row-misalignment tolerance and horizontal-spacing tolerance default to **0.5 px**; values within tolerance are considered consistent. Tolerances are constants in v1, not user-configurable.
+- Bookmark-stacked visuals: Power BI reports often stack alternate same-type visuals at the same canvas position so bookmarks can toggle visibility. Such stacks are detected by ≥50 % horizontal-bounding-box overlap plus Y delta < 50 % of the smaller visual's height, and are collapsed to a single representative (smallest Y wins) before any gap or alignment analysis.
+- Out of scope for this spec (deferred to a future feature): auto-positioning of new visuals from scratch, auto-fix of horizontal-spacing issues (detection only in v1), and any graphical user interface.

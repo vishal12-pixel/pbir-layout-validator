@@ -261,3 +261,18 @@ Description: Auto-commit after task generation
 
 Prompt: Commit task changes?
 To execute: `/speckit.git.commit`
+
+
+---
+
+## Phase 8: Post-MVP enhancements (delivered after initial release)
+
+These tasks were not in the original generated plan. They were added based on real-world
+testing of the v1 tool against production reports. All are complete.
+
+- [x] T046 Add `dedupe_stacked_visuals` to [pbir_validator/analyzer.py](pbir_validator/analyzer.py): collapses same-type visuals stacked at the same canvas position (≥50% horizontal-bounding-box overlap and Y delta < 50% of min height). Prevents bookmark-driven alternate visuals from triggering false-positive misalignments and gap violations. Wired into `iter_visuals` consumers in validator/fixer/learner. (FR-029)
+- [x] T047 Add `Misalignment` frozen dataclass to [pbir_validator/models.py](pbir_validator/models.py) and `find_row_misalignments` to [pbir_validator/analyzer.py](pbir_validator/analyzer.py): flags any visual whose Y differs from the row's modal Y by more than `DEFAULT_ALIGNMENT_TOLERANCE_PX` (0.5 px). (FR-026)
+- [x] T048 Update [pbir_validator/validator.py](pbir_validator/validator.py) to surface misalignments and update [pbir_validator/fixer.py](pbir_validator/fixer.py) to pre-apply each misalignment delta to the visual before computing adjacent-row gap shifts, so row-gap fixes layer on an aligned baseline. (FR-026, FR-028)
+- [x] T049 Add `HSpacingIssue` frozen dataclass to [pbir_validator/models.py](pbir_validator/models.py) and `find_row_hspacing_issues` to [pbir_validator/analyzer.py](pbir_validator/analyzer.py): for each row containing ≥3 visuals of the same `visual_type`, computes consecutive horizontal gaps (sorted by X) and flags any gap deviating from the row's modal gap by more than `DEFAULT_HSPACING_TOLERANCE_PX` (0.5 px). Detection-only in v1 (no auto-fix). (FR-027, FR-028)
+- [x] T050 Update [pbir_validator/validator.py](pbir_validator/validator.py) to return a 4-tuple `(violations, unknowns, misalignments, hspacing_issues)`; add `print_misalignments_table` and `print_hspacing_table` to [pbir_validator/ui.py](pbir_validator/ui.py); update [pbir_validator/cli.py](pbir_validator/cli.py) to render the two new tables and include both new categories in the non-zero exit code summary. (FR-028)
+- [x] T051 Tests: extend [tests/test_analyzer.py](tests/test_analyzer.py) with bookmark-stack dedupe cases, intra-row misalignment cases, and four horizontal-spacing cases (consistent row, off-gap detected, <3 peers ignored, mixed types ignored). Update [tests/test_validator.py](tests/test_validator.py), [tests/test_fixer.py](tests/test_fixer.py), and [tests/test_benchmark.py](tests/test_benchmark.py) for the new validator return arity. **All 120 tests pass.**
