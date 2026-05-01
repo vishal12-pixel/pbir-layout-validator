@@ -27,6 +27,9 @@ dev = ["pytest>=7.4", "pytest-cov>=4.1"]
 
 [project.scripts]
 pbir_validator = "pbir_validator.cli:main"
+
+[project.gui-scripts]
+# windows-subsystem launcher: no console window appears when double-clicked
 pbir_validator-gui = "pbir_validator.gui.app:main"
 
 [tool.setuptools.packages.find]
