@@ -25,7 +25,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build single-file Windows .exe
-        run: pyinstaller --onefile --name pbir_validator pbir_validator/__main__.py
+        run: pyinstaller --onefile --name pbir_validator run_pbir_validator.py
 
       - name: Smoke-test the built .exe
         run: dist/pbir_validator.exe --version
