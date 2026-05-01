@@ -27,11 +27,35 @@ class FixError(RuntimeError):
 
 @dataclass(frozen=True)
 class ValidateResult:
-    """Outcome of one Validate run, ready to be displayed on the three tabs."""
+    """Outcome of one Validate run, ready to be displayed on the four tabs.
+
+    ``gaps`` holds true gap violations (positive ``actual_px``: real whitespace
+    that drifts from the rule). ``overlaps`` holds entries where ``actual_px``
+    is negative — the lower visual's top edge sits *above* the upper visual's
+    bottom edge — which represents a layered/overlapping pair, not a gap.
+    Surfacing them on a separate tab keeps the Gap Violations table free of
+    confusing negative values.
+    """
 
     gaps: list[Violation] = field(default_factory=list)
+    overlaps: list[Violation] = field(default_factory=list)
     misalignments: list[Misalignment] = field(default_factory=list)
     h_spacing: list[HSpacingIssue] = field(default_factory=list)
+
+
+def _split_gaps_and_overlaps(
+    violations: list[Violation],
+) -> tuple[list[Violation], list[Violation]]:
+    """Partition validator output: positive ``actual_px`` are gaps, negative
+    are overlaps. Zero counts as a gap (visuals exactly touching)."""
+    gaps: list[Violation] = []
+    overlaps: list[Violation] = []
+    for v in violations:
+        if v.actual_px < 0:
+            overlaps.append(v)
+        else:
+            gaps.append(v)
+    return gaps, overlaps
 
 
 def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateResult:
@@ -68,8 +92,10 @@ def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateR
     except Exception as exc:  # noqa: BLE001 — present any failure to user
         raise ValidateError(f"validation failed: {exc}") from exc
 
+    gaps, overlaps = _split_gaps_and_overlaps(list(violations))
     return ValidateResult(
-        gaps=list(violations),
+        gaps=gaps,
+        overlaps=overlaps,
         misalignments=list(misalignments),
         h_spacing=list(hspacing),
     )
@@ -109,6 +135,34 @@ def gap_rows(violations: list[Violation]) -> list[tuple[object, ...]]:
         )
         for v in violations
     ]
+
+
+OVERLAP_COLUMNS: tuple[str, ...] = (
+    "page",
+    "upper",
+    "lower",
+    "overlap_px",
+)
+
+
+def overlap_rows(violations: list[Violation]) -> list[tuple[object, ...]]:
+    """Render rows where the lower visual's top sits above the upper's bottom.
+
+    ``overlap_px`` is reported as a positive number (= -actual_px) so users
+    don't see negative pixel values in the table. Sorted by overlap size
+    (largest first) to surface the worst layering issues at the top.
+    """
+    rows = [
+        (
+            v.page_display_name,
+            _label(v.from_name, v.from_type),
+            _label(v.to_name, v.to_type),
+            -v.actual_px,
+        )
+        for v in violations
+    ]
+    rows.sort(key=lambda r: r[3], reverse=True)
+    return rows
 
 
 MISALIGNMENT_COLUMNS: tuple[str, ...] = (
