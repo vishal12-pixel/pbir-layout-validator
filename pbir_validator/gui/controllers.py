@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-from ..models import HSpacingIssue, Misalignment, Shift, Violation
+from ..models import DuplicateLayer, HSpacingIssue, Misalignment, Shift, Violation
 
 
 class ValidateError(RuntimeError):
@@ -39,6 +39,7 @@ class ValidateResult:
 
     gaps: list[Violation] = field(default_factory=list)
     overlaps: list[Violation] = field(default_factory=list)
+    duplicate_layers: list[DuplicateLayer] = field(default_factory=list)
     misalignments: list[Misalignment] = field(default_factory=list)
     h_spacing: list[HSpacingIssue] = field(default_factory=list)
 
@@ -86,8 +87,8 @@ def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateR
         raise ValidateError(str(exc)) from exc
 
     try:
-        violations, _unknowns, misalignments, hspacing = validate_report(
-            report, rules
+        violations, _unknowns, misalignments, hspacing, duplicate_layers = (
+            validate_report(report, rules)
         )
     except Exception as exc:  # noqa: BLE001 — present any failure to user
         raise ValidateError(f"validation failed: {exc}") from exc
@@ -96,6 +97,7 @@ def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateR
     return ValidateResult(
         gaps=gaps,
         overlaps=overlaps,
+        duplicate_layers=list(duplicate_layers),
         misalignments=list(misalignments),
         h_spacing=list(hspacing),
     )
@@ -221,6 +223,135 @@ def h_spacing_rows(
         )
         for h in issues
     ]
+
+
+# ---------------------------------------------------------------------------
+# Duplicate Layer (US1, FR-003a)
+# ---------------------------------------------------------------------------
+
+DUPLICATE_COLUMNS: tuple[str, ...] = (
+    "page",
+    "visual_type",
+    "visual_a",
+    "visual_b",
+    "delta_y_px",
+)
+
+
+def duplicate_rows(
+    duplicates: list[DuplicateLayer],
+) -> list[tuple[object, ...]]:
+    return [
+        (
+            d.page_display_name,
+            d.visual_type,
+            _label(d.visual_a_title, d.visual_a_id),
+            _label(d.visual_b_title, d.visual_b_id),
+            d.delta_y_px,
+        )
+        for d in duplicates
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Per-tab sort/filter state (US3, US4)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TabState:
+    """Source-of-truth row list plus current sort/filter for one result tab."""
+
+    name: str
+    columns: tuple[str, ...]
+    numeric_columns: frozenset[int] = field(default_factory=frozenset)
+    rows: list[tuple[object, ...]] = field(default_factory=list)
+    sort: tuple[int, bool] | None = None  # (column_index, descending)
+    filter_text: str = ""
+
+
+def set_rows(state: TabState, rows: list[tuple[object, ...]]) -> None:
+    """Replace ``state.rows``; clear filter (FR-013); preserve sort (FR-013a)."""
+    state.rows = list(rows)
+    state.filter_text = ""
+
+
+def set_filter(state: TabState, text: str) -> None:
+    """Set ``state.filter_text`` (lower-cased)."""
+    state.filter_text = (text or "").lower()
+
+
+def toggle_sort(state: TabState, col: int) -> None:
+    """Cycle this column's sort: None → asc → desc → asc → ...
+
+    Selecting a different column resets to ascending on that column.
+    """
+    if state.sort is None or state.sort[0] != col:
+        state.sort = (col, False)
+        return
+    _, descending = state.sort
+    state.sort = (col, not descending)
+
+
+def _numeric_key(cell: object) -> float:
+    try:
+        return float(cell)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float("inf")
+
+
+def visible_rows(state: TabState) -> list[tuple[object, ...]]:
+    """Return rows after filter-then-sort (FR-012). Pure: no state mutation."""
+    needle = state.filter_text
+    if needle:
+        rows = [
+            r
+            for r in state.rows
+            if any(needle in str(cell).lower() for cell in r)
+        ]
+    else:
+        rows = list(state.rows)
+    if state.sort is None:
+        return rows
+    col, descending = state.sort
+    if col in state.numeric_columns:
+        rows.sort(key=lambda r, c=col: _numeric_key(r[c]), reverse=descending)
+    else:
+        rows.sort(
+            key=lambda r, c=col: str(r[c]).lower(), reverse=descending
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Right-click context-menu helpers (US2)
+# ---------------------------------------------------------------------------
+
+
+def open_in_power_bi(report_root: Path | str) -> tuple[bool, str]:
+    """Launch Power BI Desktop on ``<report_root>/definition.pbir``.
+
+    Returns ``(True, "")`` on success, ``(False, message)`` on failure
+    (missing file, no association, OS error). Never raises.
+    """
+    import os
+
+    target = Path(report_root) / "definition.pbir"
+    if not target.is_file():
+        return (False, f"definition.pbir not found at: {target}")
+    try:
+        os.startfile(str(target))  # type: ignore[attr-defined]
+    except OSError as exc:
+        return (False, f"could not open {target}: {exc}")
+    except AttributeError:
+        # POSIX (non-Windows) — os.startfile doesn't exist there.
+        return (False, "open-in-Power BI is supported on Windows only")
+    return (True, "")
+
+
+def row_to_clipboard_text(cells: tuple[object, ...]) -> str:
+    """Render a Treeview row as tab-separated text for clipboard paste."""
+    return "\t".join(str(c) for c in cells)
 
 
 # ---------------------------------------------------------------------------

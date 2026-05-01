@@ -11,11 +11,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import controllers, editor, widgets, workers
+from . import controllers, editor, recents, widgets, workers
 
 
 _TAB_GAPS = "Gap Violations"
 _TAB_OVERLAPS = "Overlapping Visuals"
+_TAB_DUPLICATES = "Duplicate Layer"
 _TAB_MISALIGN = "Row Misalignments"
 _TAB_HSPACING = "Horizontal Spacing"
 _TAB_FIX_PLAN = "Fix Plan"
@@ -67,12 +68,66 @@ class App:
         self.root.title("pbir-validator")
         self.root.geometry("960x600")
 
+        self._build_menubar()
         self._build_toolbar()
         self._build_notebook()
         self._build_statusbar()
 
         self._set_action_buttons_enabled(False)
         self._set_status("Ready — pick a .pbip file or .Report folder to begin.")
+
+    # -- Menu bar (US6) ---------------------------------------------------
+
+    def _build_menubar(self) -> None:
+        tk = self._tk
+        self._menu = tk.Menu(self.root)
+        self.root.config(menu=self._menu)
+        file_menu = tk.Menu(self._menu, tearoff=False)
+        self._menu.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Open .pbip…", command=self._on_browse_pbip)
+        file_menu.add_command(label="Open .Report folder…", command=self._on_browse_report)
+        file_menu.add_separator()
+        self._recents_menu = tk.Menu(file_menu, tearoff=False)
+        file_menu.add_cascade(label="Recent reports", menu=self._recents_menu)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.root.destroy)
+        self._refresh_recents_menu()
+
+    def _refresh_recents_menu(self) -> None:
+        menu = self._recents_menu
+        menu.delete(0, "end")
+        entries = recents.load()
+        if not entries:
+            menu.add_command(label="(no recent reports)", state="disabled")
+            return
+        for path_str in entries:
+            menu.add_command(
+                label=path_str,
+                command=lambda p=path_str: self._on_recent_chosen(p),
+            )
+
+    def _on_recent_chosen(self, path_str: str) -> None:
+        path = Path(path_str)
+        if not path.exists():
+            widgets.show_error(
+                self.root,
+                "Report not found",
+                f"This recent entry no longer exists:\n{path_str}\n\nIt has been removed from the list.",
+            )
+            # Removing = recording all *other* entries fresh.
+            remaining = [p for p in recents.load() if p != path_str]
+            from . import recents as _rec
+            target = _rec.recents_path()
+            try:
+                import json as _json
+                target.write_text(
+                    _json.dumps({"recent": remaining}, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
+            self._refresh_recents_menu()
+            return
+        self.set_report(path)
 
     # -- Toolbar ----------------------------------------------------------
 
@@ -105,34 +160,67 @@ class App:
         for b in (self._btn_learn, self._btn_validate, self._btn_fix):
             b.pack(side="left", padx=4, pady=(0, 6))
 
-    # -- Notebook (4 tabs seeded up-front per FR-012) ---------------------
+    # -- Notebook (6 tabs seeded up-front per FR-012) ---------------------
 
     def _build_notebook(self) -> None:
         ttk = self._ttk
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=4)
 
+        # Numeric column indices per tab (used for natural-numeric sort).
+        # Severity column index: the cell whose absolute value drives the
+        # row's green/yellow/red tag.
         self._gaps_table = self._build_tab(
             label=_TAB_GAPS,
             columns=controllers.GAP_COLUMNS,
             empty_message="No issues found",
+            numeric_columns=frozenset({3, 4, 5}),  # expected/actual/deviation
+            severity_kind="deviation",
+            severity_column_index=5,  # deviation_px
         )
         self._overlaps_table = self._build_tab(
             label=_TAB_OVERLAPS,
             columns=controllers.OVERLAP_COLUMNS,
             empty_message="No overlapping visuals",
+            numeric_columns=frozenset({3}),  # overlap_px
+            severity_kind="overlap",
+            severity_column_index=3,
+        )
+        self._duplicates_table = self._build_tab(
+            label=_TAB_DUPLICATES,
+            columns=controllers.DUPLICATE_COLUMNS,
+            empty_message="No duplicate layers detected",
+            numeric_columns=frozenset({4}),  # delta_y_px
+            severity_kind=None,  # always-yellow tag set by caller below
+            severity_column_index=None,
         )
         self._misalign_table = self._build_tab(
             label=_TAB_MISALIGN,
             columns=controllers.MISALIGNMENT_COLUMNS,
             empty_message="No issues found",
+            numeric_columns=frozenset({1, 4, 5, 6}),
+            severity_kind="deviation",
+            severity_column_index=6,
         )
         self._hspacing_table = self._build_tab(
             label=_TAB_HSPACING,
             columns=controllers.HSPACING_COLUMNS,
             empty_message="No issues found",
+            numeric_columns=frozenset({1, 5, 6, 7}),
+            severity_kind="deviation",
+            severity_column_index=7,
         )
         self._build_fix_plan_tab()
+
+        # Right-click context menu binding for each result table.
+        for table in (
+            self._gaps_table,
+            self._overlaps_table,
+            self._duplicates_table,
+            self._misalign_table,
+            self._hspacing_table,
+        ):
+            self._bind_context_menu(table)
 
     def _build_tab(
         self,
@@ -140,10 +228,22 @@ class App:
         label: str,
         columns: tuple[str, ...],
         empty_message: str,
+        numeric_columns: frozenset[int] = frozenset(),
+        severity_kind: str | None = None,
+        severity_column_index: int | None = None,
     ) -> widgets.ResultTable:
         ttk = self._ttk
         tab = ttk.Frame(self.notebook)
-        table = widgets.ResultTable(tab, columns, empty_message=empty_message)
+        table = widgets.ResultTable(
+            tab,
+            columns,
+            empty_message=empty_message,
+            sortable=True,
+            filterable=True,
+            numeric_columns=numeric_columns,
+            severity_kind=severity_kind,
+            severity_column_index=severity_column_index,
+        )
         table.pack(side="top", fill="both", expand=True)
         export_bar = ttk.Frame(tab, padding=(4, 4))
         export_bar.pack(side="bottom", fill="x")
@@ -152,6 +252,53 @@ class App:
         ).pack(side="right")
         self.notebook.add(tab, text=label)
         return table
+
+    # -- Context menu (US2) ----------------------------------------------
+
+    def _bind_context_menu(self, table: widgets.ResultTable) -> None:
+        tk = self._tk
+        menu = tk.Menu(self.root, tearoff=False)
+        menu.add_command(
+            label="Open page in Power BI Desktop",
+            command=lambda t=table: self._on_menu_open_in_pbi(t),
+        )
+        menu.add_command(
+            label="Copy row",
+            command=lambda t=table: self._on_menu_copy_row(t),
+        )
+
+        def on_right_click(event: object, t: widgets.ResultTable = table, m: object = menu) -> None:
+            tree = t.tree
+            iid = tree.identify_row(event.y)  # type: ignore[attr-defined]
+            if iid:
+                tree.selection_set(iid)
+                m.tk_popup(event.x_root, event.y_root)  # type: ignore[attr-defined]
+
+        table.tree.bind("<Button-3>", on_right_click)
+
+    def _on_menu_open_in_pbi(self, table: widgets.ResultTable) -> None:
+        if self.report_path is None:
+            widgets.show_error(
+                self.root, "No report loaded", "Load a report first."
+            )
+            return
+        ok, msg = controllers.open_in_power_bi(self.report_path)
+        if not ok:
+            from tkinter import messagebox
+
+            messagebox.showinfo(
+                title="Cannot open in Power BI Desktop",
+                message=msg,
+                parent=self.root,
+            )
+
+    def _on_menu_copy_row(self, table: widgets.ResultTable) -> None:
+        row = table.get_selected_row()
+        if row is None:
+            return
+        text = controllers.row_to_clipboard_text(row)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
 
     def _build_fix_plan_tab(self) -> None:
         """Fix Plan tab: scrollable list of ShiftCheckboxRow + summary + Apply.
@@ -270,6 +417,12 @@ class App:
         self._path_label_var.set(str(report.root))
         self._set_action_buttons_enabled(True)
         self._set_status(f"Loaded {report.root}. Click Validate to run checks.")
+        # US6: record this path in the recents file and rebuild the menu.
+        try:
+            recents.record(str(report.root))
+            self._refresh_recents_menu()
+        except Exception:  # noqa: BLE001 — recents must never break the app
+            pass
 
     def _set_action_buttons_enabled(self, enabled: bool) -> None:
         state = "!disabled" if enabled else "disabled"
@@ -303,6 +456,13 @@ class App:
         self.last_result = result
         self._gaps_table.set_rows(controllers.gap_rows(result.gaps))
         self._overlaps_table.set_rows(controllers.overlap_rows(result.overlaps))
+        self._duplicates_table.set_rows(
+            controllers.duplicate_rows(result.duplicate_layers)
+        )
+        # Duplicate-layer rows are always tagged yellow regardless of values.
+        from . import severity as _sev
+        for iid in self._duplicates_table.tree.get_children():
+            self._duplicates_table.tree.item(iid, tags=(_sev.SEV_YELLOW,))
         self._misalign_table.set_rows(
             controllers.misalignment_rows(result.misalignments)
         )
@@ -313,6 +473,7 @@ class App:
         self._set_status(
             f"Done — {len(result.gaps)} gaps, "
             f"{len(result.overlaps)} overlaps, "
+            f"{len(result.duplicate_layers)} duplicates, "
             f"{len(result.misalignments)} misalignments, "
             f"{len(result.h_spacing)} h-spacing issues."
         )
@@ -445,7 +606,7 @@ class App:
             )
             self._btn_apply.state(["disabled"])
             self._fix_export_table.set_rows([])
-            self.notebook.select(3)
+            self.notebook.select(5)
             self._set_status("Done — no fixes needed.")
             return
 
@@ -466,7 +627,7 @@ class App:
 
         self._fix_export_table.set_rows(controllers.fix_plan_rows(plan))
         self._btn_apply.state(["!disabled"])
-        self.notebook.select(3)
+        self.notebook.select(5)
         self._refresh_fix_summary()
         self._set_status(
             f"Fix dry-run complete — {len(plan.shifts)} shift(s). "

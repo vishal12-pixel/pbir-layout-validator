@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbir-validator.local/schemas/recents.json",
+  "title": "PBIR Validator recents file",
+  "description": "Persisted MRU list of report paths the user has loaded.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["recent"],
+  "properties": {
+    "recent": {
+      "type": "array",
+      "description": "Most-recently-used first. Maximum 5 entries.",
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Absolute path to a .Report folder or .pbip file."
+      }
+    }
+  }
+}
