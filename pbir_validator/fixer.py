@@ -44,10 +44,17 @@ def plan_fixes(
     for page in pages_by_id.values():
         visuals_by_page[page.id] = list(iter_visuals(page))
 
-    violations, _unknowns = validate_report(report, rules)
+    violations, _unknowns, misalignments = validate_report(report, rules)
     by_page: dict[str, list[Violation]] = defaultdict(list)
     for v in violations:
         by_page[v.page_id].append(v)
+
+    # Pre-compute per-page misalignment shifts: each misaligned visual gets a
+    # delta to bring it to its row's expected y. These deltas are applied
+    # before gap fixes so subsequent gap calculations see the aligned layout.
+    misalign_deltas_by_page: dict[str, dict[str, float]] = defaultdict(dict)
+    for m in misalignments:
+        misalign_deltas_by_page[m.page_id][m.visual_id] = m.expected_y - m.actual_y
 
     for page_id, page_violations in by_page.items():
         page = pages_by_id.get(page_id)
@@ -60,8 +67,12 @@ def plan_fixes(
                 final_violations.append(v)
             continue
 
-        # Per-visual cumulative delta on this page.
+        # Per-visual cumulative delta on this page. Seed with misalignment
+        # corrections so individual visuals are nudged onto their row's Y.
         deltas: dict[str, float] = {v.id: 0.0 for v in page_visuals}
+        for vid, d in misalign_deltas_by_page.get(page_id, {}).items():
+            if vid in deltas:
+                deltas[vid] = d
 
         # Group membership map (page-local).
         groups: dict[str, list[str]] = defaultdict(list)
@@ -156,6 +167,30 @@ def plan_fixes(
     for v in violations:
         if v.page_id not in seen_page_ids:
             final_violations.append(v)
+
+    # Plan misalignment-only shifts for pages with no gap violations.
+    for page_id, vid_to_delta in misalign_deltas_by_page.items():
+        if page_id in seen_page_ids:
+            continue  # already handled above
+        page = pages_by_id.get(page_id)
+        if page is None:
+            continue
+        for v in visuals_by_page.get(page_id, []):
+            d = vid_to_delta.get(v.id, 0.0)
+            if d == 0:
+                continue
+            new_y = v.y + d
+            all_shifts.append(
+                Shift(
+                    visual_id=v.id,
+                    page_id=page.id,
+                    path=v.path,
+                    old_y=v.y,
+                    new_y=new_y,
+                    delta_y=d,
+                    group_member=v.parent_group_name is not None,
+                )
+            )
 
     return all_shifts, final_violations
 

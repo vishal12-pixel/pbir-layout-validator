@@ -197,18 +197,26 @@ def _run_validate(args: argparse.Namespace) -> int:
     print(f"Using rules from: {conf_path}")
     print()
 
-    violations, unknowns = validate_report(report, rules)
+    violations, unknowns, misalignments = validate_report(report, rules)
 
     if violations:
         ui.print_violations_table(violations)
+    if misalignments:
+        ui.print_misalignments_table(misalignments)
     ui.print_unknown_pairs(unknowns)
 
     print()
-    pages_affected = len({v.page_id for v in violations})
-    if violations:
-        ui.error(
-            f"{len(violations)} violation(s) across {pages_affected} page(s)"
-        )
+    pages_affected = len(
+        {v.page_id for v in violations} | {m.page_id for m in misalignments}
+    )
+    total_issues = len(violations) + len(misalignments)
+    if total_issues:
+        bits: list[str] = []
+        if violations:
+            bits.append(f"{len(violations)} gap violation(s)")
+        if misalignments:
+            bits.append(f"{len(misalignments)} row misalignment(s)")
+        ui.error(f"{' + '.join(bits)} across {pages_affected} page(s)")
         return 1
     ui.success("OK — no violations")
     return 0

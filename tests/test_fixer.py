@@ -99,7 +99,7 @@ def test_revalidate_after_fix_clean_for_pageb_only(sample_report: Path) -> None:
 
     # Re-load and validate
     report2 = load_report(sample_report)
-    violations, _ = validate_report(report2, rules)
+    violations, _, _ = validate_report(report2, rules)
     page_b_violations = [v for v in violations if v.page_id == "pageB"]
     assert page_b_violations == []
 

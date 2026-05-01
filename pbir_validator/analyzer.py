@@ -176,3 +176,40 @@ def compute_gaps(rows: list[Row]) -> list[tuple[Row, Row, float]]:
     for upper, lower in zip(rows, rows[1:]):
         out.append((upper, lower, lower.y_min - upper.bottom))
     return out
+
+
+# Default sub-pixel tolerance for intra-row alignment. Y differences below this
+# threshold are considered floating-point noise from Power BI's renderer rather
+# than a real misalignment.
+DEFAULT_ALIGNMENT_TOLERANCE_PX: float = 0.5
+
+
+def find_row_misalignments(
+    rows: list[Row],
+    tolerance_px: float = DEFAULT_ALIGNMENT_TOLERANCE_PX,
+) -> list[tuple[int, "Visual", float, float]]:
+    """Return visuals whose ``y`` differs from their row's expected ``y``.
+
+    For each row with 2+ visuals, the most common ``y`` value (rounded to the
+    nearest pixel) is treated as the row's reference. Any visual deviating from
+    that reference by more than ``tolerance_px`` is reported.
+
+    Returns a list of ``(row_index, visual, expected_y, deviation_px)``.
+    """
+    out: list[tuple[int, Visual, float, float]] = []
+    for row_idx, row in enumerate(rows):
+        if len(row.visuals) < 2:
+            continue
+        # Pick the modal y as the row's reference (ties → smallest y).
+        y_counts = Counter(round(v.y) for v in row.visuals)
+        ref_y_int, _ = sorted(y_counts.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+        # Use the actual y closest to the modal int as the precise reference.
+        ref_y = min(
+            (v.y for v in row.visuals if round(v.y) == ref_y_int),
+            key=lambda y: abs(y - ref_y_int),
+        )
+        for v in row.visuals:
+            dev = v.y - ref_y
+            if abs(dev) > tolerance_px:
+                out.append((row_idx, v, ref_y, dev))
+    return out

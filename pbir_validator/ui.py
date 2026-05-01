@@ -167,6 +167,34 @@ def print_unknown_pairs(pairs: Iterable[object]) -> None:
     print_table(rows, ["Page", "From", "To", "Actual"])
 
 
+def print_misalignments_table(misalignments: Iterable[object]) -> None:
+    """Render a Row Misalignments table.
+
+    Accepts objects exposing ``page_display_name``, ``visual_type``,
+    ``visual_id``, ``actual_y``, ``expected_y``, ``deviation_px``.
+    """
+    misalignments = list(misalignments)  # type: ignore[assignment]
+    if not misalignments:
+        return
+    print()
+    print(colored("Row misalignments (visuals out of row Y):", BOLD + RED))
+    rows = []
+    for m in misalignments:
+        dev = getattr(m, "deviation_px")
+        sign = "+" if dev > 0 else ""
+        rows.append(
+            (
+                getattr(m, "page_display_name"),
+                getattr(m, "visual_type"),
+                getattr(m, "visual_id"),
+                f"{getattr(m, 'expected_y'):g}",
+                f"{getattr(m, 'actual_y'):g}",
+                f"{sign}{dev:g}px",
+            )
+        )
+    print_table(rows, ["Page", "Type", "Visual ID", "Expected Y", "Actual Y", "Deviation"])
+
+
 def print_shift_plan(shifts: Iterable[object]) -> None:
     rows = []
     for s in shifts:

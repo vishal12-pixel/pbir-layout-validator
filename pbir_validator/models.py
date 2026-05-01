@@ -99,6 +99,21 @@ class UnknownPair:
 
 
 @dataclass(frozen=True)
+class Misalignment:
+    """A visual whose ``y`` differs from its row peers (intra-row drift)."""
+
+    page_id: str
+    page_display_name: str
+    visual_id: str
+    visual_type: str
+    actual_y: float
+    expected_y: float
+    deviation_px: float
+    row_index: int
+    path: Path
+
+
+@dataclass(frozen=True)
 class Shift:
     visual_id: str
     page_id: str
