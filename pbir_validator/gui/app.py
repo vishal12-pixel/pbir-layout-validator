@@ -15,6 +15,7 @@ from . import controllers, editor, widgets, workers
 
 
 _TAB_GAPS = "Gap Violations"
+_TAB_OVERLAPS = "Overlapping Visuals"
 _TAB_MISALIGN = "Row Misalignments"
 _TAB_HSPACING = "Horizontal Spacing"
 _TAB_FIX_PLAN = "Fix Plan"
@@ -115,6 +116,11 @@ class App:
             label=_TAB_GAPS,
             columns=controllers.GAP_COLUMNS,
             empty_message="No issues found",
+        )
+        self._overlaps_table = self._build_tab(
+            label=_TAB_OVERLAPS,
+            columns=controllers.OVERLAP_COLUMNS,
+            empty_message="No overlapping visuals",
         )
         self._misalign_table = self._build_tab(
             label=_TAB_MISALIGN,
@@ -296,6 +302,7 @@ class App:
     def _on_validate_done(self, result: controllers.ValidateResult) -> None:
         self.last_result = result
         self._gaps_table.set_rows(controllers.gap_rows(result.gaps))
+        self._overlaps_table.set_rows(controllers.overlap_rows(result.overlaps))
         self._misalign_table.set_rows(
             controllers.misalignment_rows(result.misalignments)
         )
@@ -305,6 +312,7 @@ class App:
         self._set_action_buttons_enabled(True)
         self._set_status(
             f"Done — {len(result.gaps)} gaps, "
+            f"{len(result.overlaps)} overlaps, "
             f"{len(result.misalignments)} misalignments, "
             f"{len(result.h_spacing)} h-spacing issues."
         )

@@ -25,15 +25,16 @@ def _tk_available() -> bool:
 
 
 @pytest.mark.skipif(not _tk_available(), reason="No display available")
-def test_app_constructs_with_four_tabs() -> None:
+def test_app_constructs_with_five_tabs() -> None:
     from pbir_validator.gui.app import App
 
     app = App()
     try:
-        assert app.notebook.index("end") == 4
-        labels = [app.notebook.tab(i, "text") for i in range(4)]
+        assert app.notebook.index("end") == 5
+        labels = [app.notebook.tab(i, "text") for i in range(5)]
         assert labels == [
             "Gap Violations",
+            "Overlapping Visuals",
             "Row Misalignments",
             "Horizontal Spacing",
             "Fix Plan",
