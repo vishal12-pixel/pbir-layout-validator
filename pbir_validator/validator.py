@@ -17,6 +17,7 @@ from .models import (
     Violation,
 )
 from .reader import iter_pages, iter_visuals
+from .title import row_title
 
 
 def validate_report(
@@ -105,6 +106,8 @@ def validate_report(
                         deviation_px=gap - rule.gap_px,
                         from_row_index=i,
                         to_row_index=i + 1,
+                        from_name=row_title(upper.visuals),
+                        to_name=row_title(lower.visuals),
                     )
                 )
 

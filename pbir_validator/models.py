@@ -87,6 +87,8 @@ class Violation:
     from_row_index: int
     to_row_index: int
     unfixable_reason: str | None = None
+    from_name: str = ""
+    to_name: str = ""
 
 
 @dataclass(frozen=True)

@@ -83,20 +83,26 @@ def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateR
 
 GAP_COLUMNS: tuple[str, ...] = (
     "page",
-    "from_type",
-    "to_type",
+    "from",
+    "to",
     "expected_px",
     "actual_px",
     "deviation_px",
 )
 
 
+def _label(name: str, type_: str) -> str:
+    """Render '<title> (<type>)' if a title exists, else just '<type>'."""
+    name = (name or "").strip()
+    return f"{name} ({type_})" if name else type_
+
+
 def gap_rows(violations: list[Violation]) -> list[tuple[object, ...]]:
     return [
         (
             v.page_display_name,
-            v.from_type,
-            v.to_type,
+            _label(v.from_name, v.from_type),
+            _label(v.to_name, v.to_type),
             v.expected_px,
             v.actual_px,
             v.deviation_px,
