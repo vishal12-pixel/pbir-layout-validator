@@ -24,6 +24,92 @@ def pick_representative_type(visuals: Iterable[Visual]) -> tuple[str, bool]:
     return (best_type, is_mixed)
 
 
+def _is_same_stack_position(a: Visual, b: Visual) -> bool:
+    """True iff ``a`` and ``b`` occupy the same logical slot (bookmark stack).
+
+    Two visuals are considered stacked alternates when:
+    * their ``y`` coordinates differ by less than half the smaller height
+      (i.e. they're at roughly the same vertical position, not adjacent rows),
+      AND
+    * their ``x`` ranges overlap by at least 50% of the smaller width (they
+      occupy the same horizontal slot, not side-by-side variants).
+    """
+    min_h = min(a.height, b.height)
+    if min_h <= 0:
+        return False
+    if abs(a.y - b.y) > min_h * 0.5:
+        return False
+
+    a_x0, a_x1 = a.x, a.x + a.width
+    b_x0, b_x1 = b.x, b.x + b.width
+    overlap_w = max(0.0, min(a_x1, b_x1) - max(a_x0, b_x0))
+    min_w = min(a.width, b.width)
+    if min_w <= 0:
+        return False
+    return overlap_w >= min_w * 0.5
+
+
+def dedupe_stacked_visuals(visuals: Iterable[Visual]) -> list[Visual]:
+    """Collapse same-type bookmark-stacked visuals into a single representative.
+
+    Power BI reports often stack multiple visuals of the same ``visualType`` at
+    the same position so bookmarks/buttons can toggle which one is visible. The
+    JSON contains all of them, but only one is shown at a time, so for spacing
+    analysis they should count as a single logical visual.
+
+    Two visuals are merged only when they share the same ``visual_type`` AND
+    occupy the same logical slot (see :func:`_is_same_stack_position`). From
+    each cluster keep the one with the smallest ``y`` (topmost); ties broken by
+    smallest ``x`` then by ``id`` for determinism. Visuals with no stack peer
+    are passed through unchanged.
+    """
+    items = list(visuals)
+    n = len(items)
+    if n < 2:
+        return items
+
+    # Group indices by visual_type so we only do O(k²) work within each
+    # same-type bucket rather than O(n²) across all visuals on the page.
+    by_type: dict[str, list[int]] = {}
+    for idx, v in enumerate(items):
+        by_type.setdefault(v.visual_type, []).append(idx)
+
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for type_indices in by_type.values():
+        if len(type_indices) < 2:
+            continue
+        for ai in range(len(type_indices)):
+            for bi in range(ai + 1, len(type_indices)):
+                i, j = type_indices[ai], type_indices[bi]
+                if _is_same_stack_position(items[i], items[j]):
+                    union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for idx in range(n):
+        clusters.setdefault(find(idx), []).append(idx)
+
+    kept: list[Visual] = []
+    for indices in clusters.values():
+        if len(indices) == 1:
+            kept.append(items[indices[0]])
+        else:
+            best = min(indices, key=lambda k: (items[k].y, items[k].x, items[k].id))
+            kept.append(items[best])
+    return kept
+
+
 def group_into_rows(visuals: Iterable[Visual]) -> list[Row]:
     """Bucket visuals into rows using the ROW_TOLERANCE_PX greedy strategy.
 
@@ -31,10 +117,15 @@ def group_into_rows(visuals: Iterable[Visual]) -> list[Row]:
     ``abs(v.y - row.y_min) <= ROW_TOLERANCE_PX``, else starts a new row. Returned
     rows are sorted by ``y_min`` ascending.
 
+    Same-type bookmark-stacked visuals are first collapsed via
+    :func:`dedupe_stacked_visuals` so hidden alternate layouts don't produce
+    spurious row pairs with negative gaps.
+
     Mixed-type rows emit a single warning each time, naming page id, row Y, and
     the observed type set.
     """
-    by_y = sorted(visuals, key=lambda v: (v.y, v.x))
+    deduped = dedupe_stacked_visuals(visuals)
+    by_y = sorted(deduped, key=lambda v: (v.y, v.x))
     if not by_y:
         return []
 

@@ -8,6 +8,7 @@ import pytest
 
 from pbir_validator.analyzer import (
     compute_gaps,
+    dedupe_stacked_visuals,
     group_into_rows,
     pick_representative_type,
 )
@@ -61,7 +62,8 @@ def test_group_within_two_pixel_tolerance() -> None:
 
 
 def test_group_outside_tolerance_starts_new_row() -> None:
-    vs = [_v("a", "card", 0, 10), _v("b", "card", 0, 13)]  # diff=3 > 2
+    # Different x so dedup_stacked_visuals doesn't merge them.
+    vs = [_v("a", "card", 0, 10), _v("b", "card", 200, 13)]  # diff=3 > 2
     rows = group_into_rows(vs)
     assert len(rows) == 2
 
@@ -100,3 +102,57 @@ def test_compute_gaps_handles_single_row() -> None:
     vs = [_v("a", "card", 0, 0)]
     rows = group_into_rows(vs)
     assert compute_gaps(rows) == []
+
+
+def test_dedupe_collapses_same_type_stack() -> None:
+    # Two pivotTables at the same x/width but slightly different y/h — a
+    # bookmark-toggled stack. Should collapse to the topmost.
+    vs = [
+        _v("a", "pivotTable", 20, 301, w=1560, h=510),
+        _v("b", "pivotTable", 20, 343, w=1560, h=620),
+    ]
+    deduped = dedupe_stacked_visuals(vs)
+    assert len(deduped) == 1
+    assert deduped[0].id == "a"  # smallest y wins
+
+
+def test_dedupe_keeps_distant_same_type_visuals() -> None:
+    # Two pivotTables far apart vertically — different visible rows, not a stack.
+    vs = [
+        _v("a", "pivotTable", 20, 100, w=1560, h=200),
+        _v("b", "pivotTable", 20, 500, w=1560, h=200),
+    ]
+    deduped = dedupe_stacked_visuals(vs)
+    assert len(deduped) == 2
+
+
+def test_dedupe_keeps_different_types_at_same_position() -> None:
+    # A card and a button at the same position should NOT be merged.
+    vs = [
+        _v("a", "card", 0, 100, w=200, h=80),
+        _v("b", "actionButton", 0, 110, w=200, h=40),
+    ]
+    deduped = dedupe_stacked_visuals(vs)
+    assert len(deduped) == 2
+
+
+def test_dedupe_keeps_side_by_side_same_type() -> None:
+    # Two cards at the same y but different x (no horizontal overlap) — both kept.
+    vs = [
+        _v("a", "card", 0, 100, w=200, h=80),
+        _v("b", "card", 300, 100, w=200, h=80),
+    ]
+    deduped = dedupe_stacked_visuals(vs)
+    assert len(deduped) == 2
+
+
+def test_dedupe_collapses_chain_of_three_alternates() -> None:
+    # Three alternates all stacked at the same slot — collapse to one.
+    vs = [
+        _v("a", "pivotTable", 20, 300, w=1560, h=500),
+        _v("b", "pivotTable", 20, 320, w=1560, h=500),
+        _v("c", "pivotTable", 20, 340, w=1560, h=500),
+    ]
+    deduped = dedupe_stacked_visuals(vs)
+    assert len(deduped) == 1
+    assert deduped[0].id == "a"
