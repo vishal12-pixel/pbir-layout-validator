@@ -135,6 +135,27 @@ class HSpacingIssue:
 
 
 @dataclass(frozen=True)
+class DuplicateLayer:
+    """Two same-type visuals occupying the same logical slot on a page.
+
+    Surfaced as suspicious overlap candidates: in a clean PBIR layout a
+    single visual occupies each slot, but bookmark stacks and accidental
+    duplications produce N>=2 same-type visuals at near-identical x/y.
+    Emitted by :func:`pbir_validator.analyzer.find_duplicate_layers` as
+    one record per unordered pair.
+    """
+
+    page_id: str
+    page_display_name: str
+    visual_type: str
+    visual_a_id: str
+    visual_a_title: str
+    visual_b_id: str
+    visual_b_title: str
+    delta_y_px: float
+
+
+@dataclass(frozen=True)
 class Shift:
     visual_id: str
     page_id: str

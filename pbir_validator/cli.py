@@ -197,7 +197,7 @@ def _run_validate(args: argparse.Namespace) -> int:
     print(f"Using rules from: {conf_path}")
     print()
 
-    violations, unknowns, misalignments, hspacing_issues = validate_report(
+    violations, unknowns, misalignments, hspacing_issues, _duplicates = validate_report(
         report, rules
     )
 

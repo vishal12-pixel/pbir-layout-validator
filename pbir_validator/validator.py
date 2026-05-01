@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from .analyzer import (
     compute_gaps,
+    find_duplicate_layers,
     find_row_hspacing_issues,
     find_row_misalignments,
     group_into_rows,
 )
 from .models import (
+    DuplicateLayer,
     GapRule,
     HSpacingIssue,
     Misalignment,
@@ -24,25 +26,35 @@ def validate_report(
     report: Report,
     rules: dict[tuple[str, str], GapRule],
 ) -> tuple[
-    list[Violation], list[UnknownPair], list[Misalignment], list[HSpacingIssue]
+    list[Violation],
+    list[UnknownPair],
+    list[Misalignment],
+    list[HSpacingIssue],
+    list[DuplicateLayer],
 ]:
     """Walk every page and compare adjacent-row gaps to ``rules``.
 
-    Returns ``(violations, unknowns, misalignments, hspacing_issues)``.
+    Returns ``(violations, unknowns, misalignments, hspacing_issues, duplicate_layers)``.
 
-    * ``violations``     -- adjacent-row vertical gap mismatches.
-    * ``unknowns``       -- adjacent-row pairs with no rule (warnings only).
-    * ``misalignments``  -- visuals whose Y drifts from row peers.
-    * ``hspacing_issues`` -- inconsistent horizontal gaps among same-type
-      peers within a row (e.g., 6 slicers with one gap off by 2px).
+    * ``violations``         -- adjacent-row vertical gap mismatches.
+    * ``unknowns``           -- adjacent-row pairs with no rule (warnings only).
+    * ``misalignments``      -- visuals whose Y drifts from row peers.
+    * ``hspacing_issues``    -- inconsistent horizontal gaps among same-type
+      peers within a row.
+    * ``duplicate_layers``   -- pairs of same-type visuals occupying the same
+      logical slot (bookmark stacks or accidental duplications).
     """
     violations: list[Violation] = []
     unknowns: list[UnknownPair] = []
     misalignments: list[Misalignment] = []
     hspacing_issues: list[HSpacingIssue] = []
+    duplicate_layers: list[DuplicateLayer] = []
 
     for page in iter_pages(report):
         visuals = list(iter_visuals(page))
+        duplicate_layers.extend(
+            find_duplicate_layers(visuals, page_display_name=page.display_name)
+        )
         rows = group_into_rows(visuals)
         if not rows:
             continue
@@ -111,4 +123,4 @@ def validate_report(
                     )
                 )
 
-    return violations, unknowns, misalignments, hspacing_issues
+    return violations, unknowns, misalignments, hspacing_issues, duplicate_layers

@@ -6,7 +6,8 @@ from collections import Counter
 from typing import Iterable
 
 from . import ui
-from .models import ROW_TOLERANCE_PX, Row, Visual
+from .models import ROW_TOLERANCE_PX, DuplicateLayer, Row, Visual
+from .title import extract_title
 
 
 def pick_representative_type(visuals: Iterable[Visual]) -> tuple[str, bool]:
@@ -108,6 +109,79 @@ def dedupe_stacked_visuals(visuals: Iterable[Visual]) -> list[Visual]:
             best = min(indices, key=lambda k: (items[k].y, items[k].x, items[k].id))
             kept.append(items[best])
     return kept
+
+
+def find_duplicate_layers(
+    visuals: Iterable[Visual],
+    page_display_name: str = "",
+) -> list[DuplicateLayer]:
+    """Return one DuplicateLayer per pair of same-type visuals at the same slot.
+
+    Same-slot is defined by :func:`_is_same_stack_position`. For a cluster of
+    N>=2 visuals, emits ``N choose 2`` ordered pairs (visual_a is the topmost
+    by ``y``, ties broken by ``x`` then ``id``). Differs from
+    :func:`dedupe_stacked_visuals` only in what it returns: dedupe keeps a
+    single representative for downstream gap analysis; this function surfaces
+    the discarded peers so the GUI can flag them as suspicious overlap
+    candidates (FR-003).
+    """
+    items = list(visuals)
+    n = len(items)
+    if n < 2:
+        return []
+
+    by_type: dict[str, list[int]] = {}
+    for idx, v in enumerate(items):
+        by_type.setdefault(v.visual_type, []).append(idx)
+
+    parent = list(range(n))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(i: int, j: int) -> None:
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for type_indices in by_type.values():
+        if len(type_indices) < 2:
+            continue
+        for ai in range(len(type_indices)):
+            for bi in range(ai + 1, len(type_indices)):
+                i, j = type_indices[ai], type_indices[bi]
+                if _is_same_stack_position(items[i], items[j]):
+                    union(i, j)
+
+    clusters: dict[int, list[int]] = {}
+    for idx in range(n):
+        clusters.setdefault(find(idx), []).append(idx)
+
+    out: list[DuplicateLayer] = []
+    for indices in clusters.values():
+        if len(indices) < 2:
+            continue
+        ordered = sorted(indices, key=lambda k: (items[k].y, items[k].x, items[k].id))
+        for ai in range(len(ordered)):
+            for bi in range(ai + 1, len(ordered)):
+                a = items[ordered[ai]]
+                b = items[ordered[bi]]
+                out.append(
+                    DuplicateLayer(
+                        page_id=a.page_id,
+                        page_display_name=page_display_name or a.page_id,
+                        visual_type=a.visual_type,
+                        visual_a_id=a.id,
+                        visual_a_title=extract_title(a),
+                        visual_b_id=b.id,
+                        visual_b_title=extract_title(b),
+                        delta_y_px=abs(a.y - b.y),
+                    )
+                )
+    return out
 
 
 def group_into_rows(visuals: Iterable[Visual]) -> list[Row]:
