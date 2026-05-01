@@ -103,6 +103,6 @@ For the same input, the GUI's Validate output contains **exactly the same findin
 ## For developers
 
 - GUI code lives in `pbir_validator/gui/`. The CLI does not import this sub-package.
-- Run the GUI test suite with `pytest tests/gui/ -v`.
-- The smoke test in `tests/gui/test_app_smoke.py` is auto-skipped on CI runners without a display; run it locally to validate end-to-end UI behavior.
+- Run the GUI test suite with `pytest tests/test_gui_*.py -v`.
+- The smoke test in `tests/test_gui_smoke.py` is auto-skipped on CI runners without a display; run it locally to validate end-to-end UI behavior.
 - To test headless behavior on a developer machine, unset `DISPLAY` (Linux) or run inside Windows Server Core, then launch `pbir_validator-gui` and confirm exit code 2.

@@ -41,6 +41,43 @@ pip install -e ".[dev]"
 
 ---
 
+## Graphical UI (Tkinter)
+
+A desktop GUI ships alongside the CLI for users who prefer point-and-click. It
+is **opt-in**: the CLI behavior is unchanged.
+
+```pwsh
+pip install -e .
+pbir_validator-gui          # launches the window
+```
+
+Pip auto-generates a `pbir_validator-gui.exe` shim in your Python `Scripts\`
+directory. You can pin that to the taskbar or create a Desktop shortcut so
+non-CLI users can double-click to launch.
+
+**Windows shortcut hint** (optional): right-click the desktop → New →
+Shortcut, paste the full path to `pbir_validator-gui.exe` (find it via
+`(Get-Command pbir_validator-gui).Source` in PowerShell), name it
+"PBIR Validator". Double-clicking now opens the window with no terminal.
+
+The window has:
+
+- **Browse `.pbip`…** / **Browse `.Report` folder…** buttons (auto-detect input)
+- Three actions — **Learn**, **Validate**, **Fix** — wrapping the same modules
+  the CLI uses (no logic is duplicated)
+- Four tabs — Gap Violations, Row Misalignments, Horizontal Spacing, Fix Plan
+- Per-tab **Export…** button (CSV default; JSON via the file-type dropdown)
+- Per-shift checkboxes on the Fix Plan tab so you can opt out of intentional
+  offsets before clicking **Apply selected fixes**
+
+Long operations run on a background thread, so the window stays responsive.
+On a system without a display server (CI, SSH), the launcher exits with a
+"no display available" message — use the CLI in that case.
+
+> Tip: the GUI is stdlib-only (Tkinter + ttk). No new dependencies.
+
+---
+
 ## Input path: `.pbip` file *or* `.Report` folder
 
 Every subcommand's `--report` flag accepts **either**:
