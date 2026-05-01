@@ -28,6 +28,10 @@ dev = ["pytest>=7.4", "pytest-cov>=4.1"]
 [project.scripts]
 pbir_validator = "pbir_validator.cli:main"
 
+[project.gui-scripts]
+# windows-subsystem launcher: no console window appears when double-clicked
+pbir_validator-gui = "pbir_validator.gui.app:main"
+
 [tool.setuptools.packages.find]
 include = ["pbir_validator*"]
 exclude = ["tests*", "specs*"]
@@ -49,6 +53,13 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["pbir_validator"]
+omit = [
+    # Tk rendering code requires a live display — exempted per plan.md
+    # Constitution Check (Principle II). Logic lives in controllers/workers/
+    # export/editor which ARE measured.
+    "pbir_validator/gui/app.py",
+    "pbir_validator/gui/widgets.py",
+]
 
 [tool.coverage.report]
 exclude_lines = [

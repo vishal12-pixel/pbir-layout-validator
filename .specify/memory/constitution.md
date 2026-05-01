@@ -72,16 +72,22 @@ reliable defense against shipping report-corrupting changes.
 
 ### III. User Experience Consistency
 
-The CLI MUST present a predictable, unambiguous experience across all
-operations.
+Every user-facing surface MUST present a predictable, unambiguous
+experience across all operations.
 
-- Output MUST use colored terminal status: green for success, yellow for
-  warnings, red for errors. Color MUST auto-disable when stdout is not a
-  TTY or when `NO_COLOR` is set.
-- Commands MUST follow the consistent flag structure: `--validate`,
-  `--fix`, `--learn`. New top-level operations MUST extend this pattern.
-- Error messages MUST include the offending file path and, where
-  applicable, the JSON pointer or line number, plus a one-line
+- **Terminal/CLI surfaces**: Output MUST use colored terminal status:
+  green for success, yellow for warnings, red for errors. Color MUST
+  auto-disable when stdout is not a TTY or when `NO_COLOR` is set.
+- **Terminal/CLI surfaces**: Commands MUST follow the consistent flag
+  structure: `--validate`, `--fix`, `--learn`. New top-level CLI
+  operations MUST extend this pattern.
+- **Graphical (GUI) surfaces**: MUST preserve the *spirit* of the CLI
+  conventions — predictable layout, dry-run-first mutation, errors that
+  include the offending file path — but are not bound to flag syntax or
+  ANSI colors. Every GUI capability MUST already be reachable from the
+  CLI; the CLI remains the primary, equally-supported interface.
+- Error messages (CLI or GUI) MUST include the offending file path and,
+  where applicable, the JSON pointer or line number, plus a one-line
   remediation hint.
 - Any operation that mutates files MUST support `--dry-run` and MUST
   default to a preview when `--fix` is invoked without explicit
