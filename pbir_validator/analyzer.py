@@ -213,3 +213,58 @@ def find_row_misalignments(
             if abs(dev) > tolerance_px:
                 out.append((row_idx, v, ref_y, dev))
     return out
+
+
+# Default tolerance for horizontal gap consistency. Gaps within ±this many
+# pixels of the row's modal gap are considered the same (sub-pixel rendering
+# noise from Power BI).
+DEFAULT_HSPACING_TOLERANCE_PX: float = 0.5
+
+
+def find_row_hspacing_issues(
+    rows: list[Row],
+    tolerance_px: float = DEFAULT_HSPACING_TOLERANCE_PX,
+) -> list[tuple[int, Visual, Visual, float, float]]:
+    """Detect inconsistent horizontal gaps among same-type peers in a row.
+
+    For each row containing 3+ visuals of the same ``visual_type``, the visuals
+    are sorted by ``x`` and consecutive horizontal gaps are computed as
+    ``next.x - (prev.x + prev.width)``. The modal gap (rounded to nearest int)
+    is treated as the row's expected horizontal spacing. Any gap deviating by
+    more than ``tolerance_px`` is reported.
+
+    Returns ``[(row_index, left_visual, right_visual, expected_gap, deviation), ...]``.
+    """
+    out: list[tuple[int, Visual, Visual, float, float]] = []
+    for row_idx, row in enumerate(rows):
+        # Bucket the row's visuals by type; only check buckets with ≥3 peers
+        # (need ≥2 gaps to identify a modal pattern).
+        by_type: dict[str, list[Visual]] = {}
+        for v in row.visuals:
+            by_type.setdefault(v.visual_type, []).append(v)
+
+        for vt, peers in by_type.items():
+            if len(peers) < 3:
+                continue
+            peers_sorted = sorted(peers, key=lambda v: v.x)
+            gaps: list[tuple[Visual, Visual, float]] = []
+            for left, right in zip(peers_sorted, peers_sorted[1:]):
+                gap = right.x - (left.x + left.width)
+                gaps.append((left, right, gap))
+            if not gaps:
+                continue
+
+            # Modal gap (rounded to nearest int) wins; ties → smallest gap.
+            gap_counts = Counter(round(g) for _, _, g in gaps)
+            ref_gap_int, _ = sorted(
+                gap_counts.items(), key=lambda kv: (-kv[1], kv[0])
+            )[0]
+            ref_gap = min(
+                (g for _, _, g in gaps if round(g) == ref_gap_int),
+                key=lambda g: abs(g - ref_gap_int),
+            )
+            for left, right, gap in gaps:
+                dev = gap - ref_gap
+                if abs(dev) > tolerance_px:
+                    out.append((row_idx, left, right, ref_gap, dev))
+    return out

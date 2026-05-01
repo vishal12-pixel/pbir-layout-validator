@@ -2,25 +2,43 @@
 
 from __future__ import annotations
 
-from .analyzer import compute_gaps, find_row_misalignments, group_into_rows
-from .models import GapRule, Misalignment, Report, UnknownPair, Violation
+from .analyzer import (
+    compute_gaps,
+    find_row_hspacing_issues,
+    find_row_misalignments,
+    group_into_rows,
+)
+from .models import (
+    GapRule,
+    HSpacingIssue,
+    Misalignment,
+    Report,
+    UnknownPair,
+    Violation,
+)
 from .reader import iter_pages, iter_visuals
 
 
 def validate_report(
     report: Report,
     rules: dict[tuple[str, str], GapRule],
-) -> tuple[list[Violation], list[UnknownPair], list[Misalignment]]:
+) -> tuple[
+    list[Violation], list[UnknownPair], list[Misalignment], list[HSpacingIssue]
+]:
     """Walk every page and compare adjacent-row gaps to ``rules``.
 
-    Pages with 0 or 1 row pass trivially (no adjacent pairs). Returns a tuple of
-    ``(violations, unknown_pairs, misalignments)``. Unknown pairs are warnings,
-    not violations. Misalignments flag visuals whose ``y`` drifts from their
-    row peers (intra-row alignment drift, e.g. one slicer 1px off).
+    Returns ``(violations, unknowns, misalignments, hspacing_issues)``.
+
+    * ``violations``     -- adjacent-row vertical gap mismatches.
+    * ``unknowns``       -- adjacent-row pairs with no rule (warnings only).
+    * ``misalignments``  -- visuals whose Y drifts from row peers.
+    * ``hspacing_issues`` -- inconsistent horizontal gaps among same-type
+      peers within a row (e.g., 6 slicers with one gap off by 2px).
     """
     violations: list[Violation] = []
     unknowns: list[UnknownPair] = []
     misalignments: list[Misalignment] = []
+    hspacing_issues: list[HSpacingIssue] = []
 
     for page in iter_pages(report):
         visuals = list(iter_visuals(page))
@@ -40,6 +58,21 @@ def validate_report(
                     deviation_px=dev,
                     row_index=row_idx,
                     path=visual.path,
+                )
+            )
+
+        for row_idx, left, right, ref_gap, dev in find_row_hspacing_issues(rows):
+            hspacing_issues.append(
+                HSpacingIssue(
+                    page_id=page.id,
+                    page_display_name=page.display_name,
+                    visual_type=left.visual_type,
+                    left_visual_id=left.id,
+                    right_visual_id=right.id,
+                    expected_gap_px=ref_gap,
+                    actual_gap_px=ref_gap + dev,
+                    deviation_px=dev,
+                    row_index=row_idx,
                 )
             )
 
@@ -75,4 +108,4 @@ def validate_report(
                     )
                 )
 
-    return violations, unknowns, misalignments
+    return violations, unknowns, misalignments, hspacing_issues

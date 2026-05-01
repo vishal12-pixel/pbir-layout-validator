@@ -195,6 +195,39 @@ def print_misalignments_table(misalignments: Iterable[object]) -> None:
     print_table(rows, ["Page", "Type", "Visual ID", "Expected Y", "Actual Y", "Deviation"])
 
 
+def print_hspacing_table(issues: Iterable[object]) -> None:
+    """Render a Horizontal Spacing Issues table.
+
+    Accepts objects exposing ``page_display_name``, ``visual_type``,
+    ``left_visual_id``, ``right_visual_id``, ``expected_gap_px``,
+    ``actual_gap_px``, ``deviation_px``.
+    """
+    issues = list(issues)  # type: ignore[assignment]
+    if not issues:
+        return
+    print()
+    print(colored("Horizontal spacing issues (uneven gaps within row):", BOLD + RED))
+    rows = []
+    for h in issues:
+        dev = getattr(h, "deviation_px")
+        sign = "+" if dev > 0 else ""
+        rows.append(
+            (
+                getattr(h, "page_display_name"),
+                getattr(h, "visual_type"),
+                getattr(h, "left_visual_id"),
+                getattr(h, "right_visual_id"),
+                f"{getattr(h, 'expected_gap_px'):g}px",
+                f"{getattr(h, 'actual_gap_px'):g}px",
+                f"{sign}{dev:g}px",
+            )
+        )
+    print_table(
+        rows,
+        ["Page", "Type", "Left", "Right", "Expected", "Actual", "Deviation"],
+    )
+
+
 def print_shift_plan(shifts: Iterable[object]) -> None:
     rows = []
     for s in shifts:

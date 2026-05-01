@@ -197,25 +197,33 @@ def _run_validate(args: argparse.Namespace) -> int:
     print(f"Using rules from: {conf_path}")
     print()
 
-    violations, unknowns, misalignments = validate_report(report, rules)
+    violations, unknowns, misalignments, hspacing_issues = validate_report(
+        report, rules
+    )
 
     if violations:
         ui.print_violations_table(violations)
     if misalignments:
         ui.print_misalignments_table(misalignments)
+    if hspacing_issues:
+        ui.print_hspacing_table(hspacing_issues)
     ui.print_unknown_pairs(unknowns)
 
     print()
     pages_affected = len(
-        {v.page_id for v in violations} | {m.page_id for m in misalignments}
+        {v.page_id for v in violations}
+        | {m.page_id for m in misalignments}
+        | {h.page_id for h in hspacing_issues}
     )
-    total_issues = len(violations) + len(misalignments)
+    total_issues = len(violations) + len(misalignments) + len(hspacing_issues)
     if total_issues:
         bits: list[str] = []
         if violations:
             bits.append(f"{len(violations)} gap violation(s)")
         if misalignments:
             bits.append(f"{len(misalignments)} row misalignment(s)")
+        if hspacing_issues:
+            bits.append(f"{len(hspacing_issues)} h-spacing issue(s)")
         ui.error(f"{' + '.join(bits)} across {pages_affected} page(s)")
         return 1
     ui.success("OK — no violations")

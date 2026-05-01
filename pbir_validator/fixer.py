@@ -44,7 +44,7 @@ def plan_fixes(
     for page in pages_by_id.values():
         visuals_by_page[page.id] = list(iter_visuals(page))
 
-    violations, _unknowns, misalignments = validate_report(report, rules)
+    violations, _unknowns, misalignments, _hspacing = validate_report(report, rules)
     by_page: dict[str, list[Violation]] = defaultdict(list)
     for v in violations:
         by_page[v.page_id].append(v)

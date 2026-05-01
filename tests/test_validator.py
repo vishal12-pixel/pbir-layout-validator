@@ -27,7 +27,7 @@ def test_clean_page_a_passes(sample_report: Path) -> None:
     (pages_dir / "pageC").rename(pages_dir / "_pageC_hidden_subdir")
     (pages_dir / "_pageC_hidden_subdir" / "page.json").unlink()
     report = load_report(sample_report)
-    violations, unknowns, _ = validate_report(report, rules)
+    violations, unknowns, _, _ = validate_report(report, rules)
     assert violations == []
     assert unknowns == []
 
@@ -35,7 +35,7 @@ def test_clean_page_a_passes(sample_report: Path) -> None:
 def test_pageb_violation_detected(sample_report: Path) -> None:
     rules = _learn_from_a(sample_report)
     report = load_report(sample_report)
-    violations, _, _ = validate_report(report, rules)
+    violations, _, _, _ = validate_report(report, rules)
     page_b_violations = [v for v in violations if v.page_id == "pageB"]
     assert len(page_b_violations) == 1
     v = page_b_violations[0]
@@ -58,7 +58,7 @@ def test_unknown_pair_does_not_count_as_violation(
     )
     rules = parse_conf(conf)
     report = load_report(sample_report)
-    violations, unknowns, _ = validate_report(report, rules)
+    violations, unknowns, _, _ = validate_report(report, rules)
     # All non-(card→actionButton) pairs become unknowns
     assert any(
         u.from_type == "actionButton" and u.to_type == "tableEx" for u in unknowns
@@ -78,7 +78,7 @@ def test_zero_visual_page_passes(sample_report: Path) -> None:
     )
     rules = _learn_from_a(sample_report)
     report = load_report(sample_report)
-    violations, unknowns, _ = validate_report(report, rules)
+    violations, unknowns, _, _ = validate_report(report, rules)
     assert all(v.page_id != "pageEmpty" for v in violations)
     assert all(u.page_id != "pageEmpty" for u in unknowns)
 

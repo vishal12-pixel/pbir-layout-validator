@@ -156,3 +156,57 @@ def test_dedupe_collapses_chain_of_three_alternates() -> None:
     deduped = dedupe_stacked_visuals(vs)
     assert len(deduped) == 1
     assert deduped[0].id == "a"
+
+def test_hspacing_consistent_row_no_issues() -> None:
+    from pbir_validator.analyzer import find_row_hspacing_issues, group_into_rows
+    # 4 slicers at y=10, width=100, gaps of 20px each.
+    vs = [
+        _v("s1", "slicer", 0,   10, w=100, h=50),
+        _v("s2", "slicer", 120, 10, w=100, h=50),
+        _v("s3", "slicer", 240, 10, w=100, h=50),
+        _v("s4", "slicer", 360, 10, w=100, h=50),
+    ]
+    rows = group_into_rows(vs)
+    assert find_row_hspacing_issues(rows) == []
+
+
+def test_hspacing_detects_off_gap_in_row() -> None:
+    from pbir_validator.analyzer import find_row_hspacing_issues, group_into_rows
+    # 4 slicers; gaps are 20, 22, 20 → one outlier on the middle gap.
+    vs = [
+        _v("s1", "slicer", 0,   10, w=100, h=50),
+        _v("s2", "slicer", 120, 10, w=100, h=50),
+        _v("s3", "slicer", 242, 10, w=100, h=50),  # 22px gap (off by 2)
+        _v("s4", "slicer", 362, 10, w=100, h=50),
+    ]
+    rows = group_into_rows(vs)
+    issues = find_row_hspacing_issues(rows)
+    assert len(issues) == 1
+    row_idx, left, right, ref_gap, dev = issues[0]
+    assert left.id == "s2"
+    assert right.id == "s3"
+    assert round(ref_gap) == 20
+    assert round(dev) == 2
+
+
+def test_hspacing_ignores_rows_with_fewer_than_three_peers() -> None:
+    from pbir_validator.analyzer import find_row_hspacing_issues, group_into_rows
+    # Only 2 slicers — cannot establish a modal pattern.
+    vs = [
+        _v("s1", "slicer", 0,   10, w=100, h=50),
+        _v("s2", "slicer", 130, 10, w=100, h=50),
+    ]
+    rows = group_into_rows(vs)
+    assert find_row_hspacing_issues(rows) == []
+
+
+def test_hspacing_ignores_mixed_types() -> None:
+    from pbir_validator.analyzer import find_row_hspacing_issues, group_into_rows
+    # 2 slicers + 1 card — buckets all have <3 peers.
+    vs = [
+        _v("s1", "slicer", 0,   10, w=100, h=50),
+        _v("s2", "slicer", 120, 10, w=100, h=50),
+        _v("c1", "card",   240, 10, w=100, h=50),
+    ]
+    rows = group_into_rows(vs)
+    assert find_row_hspacing_issues(rows) == []

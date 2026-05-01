@@ -114,6 +114,25 @@ class Misalignment:
 
 
 @dataclass(frozen=True)
+class HSpacingIssue:
+    """An inconsistent horizontal gap between same-row, same-type peers.
+
+    Reported when a row has 3+ visuals of the same type laid out side-by-side
+    and at least one horizontal gap deviates from the row's modal gap.
+    """
+
+    page_id: str
+    page_display_name: str
+    visual_type: str
+    left_visual_id: str
+    right_visual_id: str
+    expected_gap_px: float
+    actual_gap_px: float
+    deviation_px: float
+    row_index: int
+
+
+@dataclass(frozen=True)
 class Shift:
     visual_id: str
     page_id: str
