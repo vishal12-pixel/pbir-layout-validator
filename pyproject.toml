@@ -36,6 +36,9 @@ pbir_validator-gui = "pbir_validator.gui.app:main"
 include = ["pbir_validator*"]
 exclude = ["tests*", "specs*"]
 
+[tool.setuptools.package-data]
+pbir_validator = ["profiles/*.md"]
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
@@ -56,7 +59,8 @@ source = ["pbir_validator"]
 omit = [
     # Tk rendering code requires a live display — exempted per plan.md
     # Constitution Check (Principle II). Logic lives in controllers/workers/
-    # export/editor which ARE measured.
+    # export/editor and the new pure-data modules (grade, profiles, undo,
+    # watch, panel) which ARE measured at the >=90% per-module gate.
     "pbir_validator/gui/app.py",
     "pbir_validator/gui/widgets.py",
 ]

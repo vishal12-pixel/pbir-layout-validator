@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Mapping, Sequence
 
-from ..models import DuplicateLayer, HSpacingIssue, Misalignment, Shift, Violation
+from ..models import DuplicateLayer, GapRule, HSpacingIssue, Misalignment, Shift, Violation
 
 
 class ValidateError(RuntimeError):
@@ -59,12 +59,20 @@ def _split_gaps_and_overlaps(
     return gaps, overlaps
 
 
-def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateResult:
+def validate(
+    report_path: Path | str,
+    conf_path: Path | str | None,
+    *,
+    rules: Mapping[tuple[str, str], GapRule] | None = None,
+) -> ValidateResult:
     """Run the existing validator against ``report_path`` and return a result.
 
     The conf.md path defaults to ``<report>/conf.md`` when ``conf_path`` is
-    ``None``. Any underlying exception is wrapped in :class:`ValidateError`
-    with a readable message that the GUI surfaces via ``widgets.show_error``.
+    ``None``. When ``rules`` is provided, ``conf_path`` is ignored entirely
+    (no disk lookup) — used by the profile dropdown (US6) to swap rule
+    sources without touching the user's working tree. Any underlying
+    exception is wrapped in :class:`ValidateError` with a readable message
+    that the GUI surfaces via ``widgets.show_error``.
     """
     # Lazy imports keep import-time cheap and avoid pulling parsing modules
     # into the GUI smoke test.
@@ -78,17 +86,20 @@ def validate(report_path: Path | str, conf_path: Path | str | None) -> ValidateR
     except NotAPbirError as exc:
         raise ValidateError(str(exc)) from exc
 
-    resolved_conf = (
-        Path(conf_path) if conf_path is not None else report.root / "conf.md"
-    )
-    try:
-        rules = parse_conf(resolved_conf)
-    except ConfParseError as exc:
-        raise ValidateError(str(exc)) from exc
+    if rules is not None:
+        resolved_rules: Mapping[tuple[str, str], GapRule] = rules
+    else:
+        resolved_conf = (
+            Path(conf_path) if conf_path is not None else report.root / "conf.md"
+        )
+        try:
+            resolved_rules = parse_conf(resolved_conf)
+        except ConfParseError as exc:
+            raise ValidateError(str(exc)) from exc
 
     try:
         violations, _unknowns, misalignments, hspacing, duplicate_layers = (
-            validate_report(report, rules)
+            validate_report(report, resolved_rules)
         )
     except Exception as exc:  # noqa: BLE001 — present any failure to user
         raise ValidateError(f"validation failed: {exc}") from exc
@@ -530,7 +541,7 @@ def fix_apply(
         raise FixError("no shifts selected")
 
     from ..errors import NotAPbirError, WriteError
-    from ..fixer import apply_shifts, build_visual_lookup
+    from ..fixer import apply_plan, build_visual_lookup
     from ..reader import load_report
 
     try:
@@ -542,11 +553,129 @@ def fix_apply(
     if not chosen:
         raise FixError("selected_ids matched no proposed shifts")
 
-    lookup = build_visual_lookup(report)
     try:
-        apply_shifts(chosen, lookup)
+        apply_plan(report, chosen)
     except WriteError as exc:
         raise FixError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise FixError(f"apply failed: {exc}") from exc
     return len(chosen)
+
+
+# ---------------------------------------------------------------------------
+# US2 — Export all (CSV ZIP)
+# ---------------------------------------------------------------------------
+
+
+class NothingToExportError(Exception):
+    """Raised by :func:`export_all_zip` when every result tab is empty.
+
+    The GUI converts this into a "nothing to export" messagebox; the CLI
+    never invokes this helper so byte-identity is preserved.
+    """
+
+
+# Fixed entry names per FR-012; alphabetical so list-comparison tests don't
+# care about insertion order.
+_ZIP_ENTRY_ORDER: tuple[str, ...] = (
+    "duplicate_layers.csv",
+    "fix_plan.csv",
+    "gaps.csv",
+    "h_spacing.csv",
+    "misalignments.csv",
+    "overlaps.csv",
+)
+
+
+def _zip_entries(
+    result: "ValidateResult",
+    fix_plan: "FixPlan | Sequence[Shift] | None",
+) -> dict[str, tuple[tuple[str, ...], list[tuple[object, ...]]]]:
+    from . import export as _export  # noqa: F401 — used by callers
+
+    entries: dict[str, tuple[tuple[str, ...], list[tuple[object, ...]]]] = {}
+
+    if result.gaps:
+        entries["gaps.csv"] = (GAP_COLUMNS, gap_rows(result.gaps))
+    if result.overlaps:
+        entries["overlaps.csv"] = (OVERLAP_COLUMNS, overlap_rows(result.overlaps))
+    if result.duplicate_layers:
+        entries["duplicate_layers.csv"] = (
+            DUPLICATE_COLUMNS,
+            duplicate_rows(result.duplicate_layers),
+        )
+    if result.misalignments:
+        entries["misalignments.csv"] = (
+            MISALIGNMENT_COLUMNS,
+            misalignment_rows(result.misalignments),
+        )
+    if result.h_spacing:
+        entries["h_spacing.csv"] = (HSPACING_COLUMNS, h_spacing_rows(result.h_spacing))
+
+    if fix_plan is not None:
+        # Accept either a FixPlan or a raw Sequence[Shift] for flexibility.
+        if isinstance(fix_plan, FixPlan):
+            fp_rows = fix_plan_rows(fix_plan)
+        else:
+            fp_rows = [
+                (
+                    s.page_id,
+                    s.visual_id,
+                    s.old_y,
+                    s.new_y,
+                    s.delta_y,
+                    "yes" if getattr(s, "group_member", False) else "no",
+                )
+                for s in fix_plan
+            ]
+        if fp_rows:
+            entries["fix_plan.csv"] = (FIX_PLAN_COLUMNS, fp_rows)
+
+    return entries
+
+
+def export_all_zip(
+    result: "ValidateResult",
+    fix_plan: "FixPlan | Sequence[Shift] | None",
+    dest_path: Path | str,
+) -> list[str]:
+    """Write a ZIP archive at ``dest_path`` with one CSV per non-empty tab.
+
+    Returns the list of archive entry names actually written, sorted
+    alphabetically. Raises :class:`NothingToExportError` when every tab
+    is empty (no file is written). Raises :class:`OSError` on write
+    failure (the GUI surfaces via ``widgets.show_error``).
+    """
+    import zipfile
+
+    from . import export as _export
+
+    entries = _zip_entries(result, fix_plan)
+    if not entries:
+        raise NothingToExportError("no non-empty result tabs")
+
+    written: list[str] = []
+    target = Path(dest_path)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name in sorted(entries.keys()):
+            headers, rows = entries[name]
+            zf.writestr(name, _export._table_to_csv_bytes(headers, rows))
+            written.append(name)
+    return written
+
+
+def default_zip_filename(
+    report_root: Path | str,
+    *,
+    now=None,
+) -> str:
+    """Return ``<report_root_basename>_validation_<YYYYMMDD-HHMMSS>.zip``.
+
+    ``now`` lets tests inject a frozen :class:`datetime.datetime`.
+    """
+    import datetime as _dt
+
+    when = now if now is not None else _dt.datetime.now()
+    base = Path(report_root).name or "report"
+    stamp = when.strftime("%Y%m%d-%H%M%S")
+    return f"{base}_validation_{stamp}.zip"

@@ -210,6 +210,24 @@ def apply_shifts(shifts: Iterable[Shift], visual_lookup: dict[Path, object]) -> 
         write_visual_json(v, s.new_y)  # type: ignore[arg-type]
 
 
+def apply_plan(report: Report, shifts: Iterable[Shift]) -> None:
+    """GUI-only helper: write the Undo backup THEN apply each shift.
+
+    Per FR-060 / contracts/controller-api.md, the backup is written
+    BEFORE the first :func:`writer.write_visual_json` call so a
+    partially-written Apply still has a recoverable backup on disk.
+    The CLI continues to use :func:`apply_shifts` directly to preserve
+    byte-identical CLI behavior (FR-070).
+    """
+    # Lazy import to avoid pulling Tk-adjacent modules into the CLI path.
+    from .gui import undo
+
+    materialized = list(shifts)
+    undo.record_pre_fix(report.root, materialized)
+    lookup = build_visual_lookup(report)
+    apply_shifts(materialized, lookup)
+
+
 def build_visual_lookup(report: Report) -> dict[Path, object]:
     """Build a ``{visual.path: Visual}`` map for the entire report."""
     lookup: dict[Path, object] = {}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pbir-validator.local/schemas/undo-record-1.0.json",
+  "title": "PBIR Validator Undo Record",
+  "description": "Backup written by fixer.apply_plan before any visual.json is mutated; consumed by undo.restore_last_fix to revert position.y to the pre-Apply value.",
+  "type": "object",
+  "required": ["applied_at", "shifts"],
+  "additionalProperties": false,
+  "properties": {
+    "applied_at": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp the Apply ran. Informational only.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$"
+    },
+    "shifts": {
+      "type": "array",
+      "description": "One entry per visual whose position.y was changed by Apply. Empty array is legal but no Undo button is enabled when the file is missing.",
+      "items": {
+        "type": "object",
+        "required": ["path", "visual_id", "old_y", "new_y"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "POSIX-style relative path from report root to the touched visual.json (forward slashes only, never backslashes)."
+          },
+          "visual_id": {
+            "type": "string",
+            "description": "The visual's id field; redundant with path but cheap correlation aid for log readers.",
+            "minLength": 1
+          },
+          "old_y": {
+            "type": "number",
+            "description": "Pre-Apply value of position.y. Restored by Undo."
+          },
+          "new_y": {
+            "type": "number",
+            "description": "Post-Apply value of position.y. Written for audit only; never read by Undo."
+          }
+        }
+      }
+    }
+  }
+}
