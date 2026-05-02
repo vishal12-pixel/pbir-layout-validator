@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import controllers, editor, recents, widgets, workers
+from . import controllers, editor, grade, panel, profiles, recents, undo, watch, widgets, workers
 
 
 _TAB_GAPS = "Gap Violations"
@@ -64,9 +64,21 @@ class App:
         self.conf_path: Path | None = None
         self.last_result: controllers.ValidateResult | None = None
 
+        # Power-feature state (005)
+        state = recents.load_state()
+        self._panel_visible: bool = bool(state.get("side_panel_visible", True))
+        self._profile_name: str = str(state.get("profile") or "Standard")
+        self._watch_on: bool = False
+        self._watch_state: dict[Path, float] = {}
+        self._watch_last_check_at: float = 0.0
+        self._pending_profile: str | None = None
+        self._visuals_by_id: dict[str, object] = {}
+        self._current_tab_columns: tuple[str, ...] = ()
+        self._current_tab_rows: list[tuple[object, ...]] = []
+
         self.root = tk.Tk()
         self.root.title("pbir-validator")
-        self.root.geometry("960x600")
+        self.root.geometry("1280x720")
 
         self._build_menubar()
         self._build_toolbar()
@@ -96,7 +108,7 @@ class App:
     def _refresh_recents_menu(self) -> None:
         menu = self._recents_menu
         menu.delete(0, "end")
-        entries = recents.load()
+        entries = recents.load_paths()
         if not entries:
             menu.add_command(label="(no recent reports)", state="disabled")
             return
@@ -114,14 +126,15 @@ class App:
                 "Report not found",
                 f"This recent entry no longer exists:\n{path_str}\n\nIt has been removed from the list.",
             )
-            # Removing = recording all *other* entries fresh.
-            remaining = [p for p in recents.load() if p != path_str]
+            # Removing = preserving the full state but rewriting "recent".
             from . import recents as _rec
+            state = _rec.load_state()
+            state["recent"] = [p for p in state["recent"] if p != path_str]
             target = _rec.recents_path()
             try:
                 import json as _json
                 target.write_text(
-                    _json.dumps({"recent": remaining}, indent=2), encoding="utf-8"
+                    _json.dumps(state, indent=2), encoding="utf-8"
                 )
             except OSError:
                 pass
@@ -160,12 +173,95 @@ class App:
         for b in (self._btn_learn, self._btn_validate, self._btn_fix):
             b.pack(side="left", padx=4, pady=(0, 6))
 
+        # --- 005 Power Features toolbar additions ---
+        self._btn_export_zip = ttk.Button(
+            action_bar, text="Export all (CSV ZIP)", command=self._on_export_zip
+        )
+        self._btn_export_zip.pack(side="left", padx=4, pady=(0, 6))
+        self._btn_export_zip.state(["disabled"])
+
+        self._watch_var = self._tk.BooleanVar(value=False)
+        self._btn_watch = ttk.Checkbutton(
+            action_bar,
+            text="Watch",
+            variable=self._watch_var,
+            command=self._on_toggle_watch,
+        )
+        self._btn_watch.pack(side="left", padx=4, pady=(0, 6))
+        self._btn_watch.state(["disabled"])
+
+        self._btn_undo = ttk.Button(
+            action_bar, text="Undo last fix", command=self._on_undo_last
+        )
+        self._btn_undo.pack(side="left", padx=4, pady=(0, 6))
+        self._btn_undo.state(["disabled"])
+
+        self._btn_panel = ttk.Button(
+            action_bar,
+            text="Hide panel" if self._panel_visible else "Show panel",
+            command=self._on_toggle_panel,
+        )
+        self._btn_panel.pack(side="left", padx=4, pady=(0, 6))
+
+        # Profile combobox — populated lazily on report load.
+        ttk.Label(action_bar, text="Profile:").pack(
+            side="left", padx=(12, 2), pady=(0, 6)
+        )
+        self._profile_var = self._tk.StringVar(value=self._profile_name)
+        self._profile_combo = ttk.Combobox(
+            action_bar,
+            textvariable=self._profile_var,
+            state="readonly",
+            width=16,
+        )
+        self._profile_combo.pack(side="left", padx=2, pady=(0, 6))
+        self._profile_combo.bind(
+            "<<ComboboxSelected>>", self._on_profile_changed
+        )
+        self._refresh_profile_combobox()
+
+        # Grade label (FR-033)
+        self._grade_var = self._tk.StringVar(value="–")
+        self._grade_label = ttk.Label(
+            action_bar,
+            textvariable=self._grade_var,
+            foreground=grade.color_for(""),
+            font=("TkDefaultFont", 12, "bold"),
+            padding=(8, 0),
+        )
+        self._grade_label.pack(side="right", padx=8, pady=(0, 6))
+
     # -- Notebook (6 tabs seeded up-front per FR-012) ---------------------
 
     def _build_notebook(self) -> None:
         ttk = self._ttk
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(side="top", fill="both", expand=True, padx=8, pady=4)
+        tk = self._tk
+
+        # Wrap notebook + side panel in a PanedWindow (US5, FR-040).
+        self._paned = ttk.PanedWindow(self.root, orient="horizontal")
+        self._paned.pack(side="top", fill="both", expand=True, padx=8, pady=4)
+
+        nb_frame = ttk.Frame(self._paned)
+        self.notebook = ttk.Notebook(nb_frame)
+        self.notebook.pack(fill="both", expand=True)
+        self._paned.add(nb_frame, weight=3)
+
+        # Side panel (right) — read-only Text widget for visual context.
+        self._panel_frame = ttk.Frame(self._paned, width=360)
+        ttk.Label(
+            self._panel_frame,
+            text="Visual context",
+            padding=(8, 6),
+            anchor="w",
+        ).pack(side="top", fill="x")
+        self._side_panel_text = widgets.make_readonly_text(self._panel_frame)
+        self._side_panel_text.pack(side="top", fill="both", expand=True, padx=4, pady=4)
+        self._side_panel_set("(select a row in any issue tab to drill in)")
+
+        if self._panel_visible:
+            self._paned.add(self._panel_frame, weight=1)
+        # Default 360 px sash placement once the window has computed sizes.
+        self.root.after(50, self._set_default_sash)
 
         # Numeric column indices per tab (used for natural-numeric sort).
         # Severity column index: the cell whose absolute value drives the
@@ -212,15 +308,17 @@ class App:
         )
         self._build_fix_plan_tab()
 
-        # Right-click context menu binding for each result table.
-        for table in (
-            self._gaps_table,
-            self._overlaps_table,
-            self._duplicates_table,
-            self._misalign_table,
-            self._hspacing_table,
+        # Right-click context menu + double-click open + side-panel select.
+        for table, columns in (
+            (self._gaps_table, controllers.GAP_COLUMNS),
+            (self._overlaps_table, controllers.OVERLAP_COLUMNS),
+            (self._duplicates_table, controllers.DUPLICATE_COLUMNS),
+            (self._misalign_table, controllers.MISALIGNMENT_COLUMNS),
+            (self._hspacing_table, controllers.HSPACING_COLUMNS),
         ):
             self._bind_context_menu(table)
+            self._bind_double_click_open(table)
+            self._bind_side_panel_select(table, columns)
 
     def _build_tab(
         self,
@@ -423,6 +521,16 @@ class App:
             self._refresh_recents_menu()
         except Exception:  # noqa: BLE001 — recents must never break the app
             pass
+        # 005: reset watch state, refresh profiles dropdown, refresh undo button.
+        self._watch_state = {}
+        try:
+            self._refresh_profile_combobox()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._refresh_undo_button()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _set_action_buttons_enabled(self, enabled: bool) -> None:
         state = "!disabled" if enabled else "disabled"
@@ -443,10 +551,17 @@ class App:
         report = self.report_path
         conf = self.conf_path
 
+        # US6: profile dropdown overrides report-root conf.md when not "Report-default".
+        try:
+            rules = profiles.load_profile(self._profile_name, report)
+        except Exception:  # noqa: BLE001
+            rules = None
+
+        def _do_validate():
+            return controllers.validate(report, conf, rules=rules)
+
         workers.run_in_background(
-            controllers.validate,
-            report,
-            conf,
+            _do_validate,
             on_done=self._on_validate_done,
             on_error=self._on_validate_error,
             root=self.root,
@@ -454,6 +569,17 @@ class App:
 
     def _on_validate_done(self, result: controllers.ValidateResult) -> None:
         self.last_result = result
+        # Refresh the visuals_by_id index for the side panel (US5).
+        try:
+            from ..reader import load_report
+            report_obj = load_report(self.report_path) if self.report_path else None
+            if report_obj is not None:
+                self._visuals_by_id = {
+                    v.id: v for page in report_obj.pages for v in page.visuals
+                }
+        except Exception:  # noqa: BLE001
+            self._visuals_by_id = {}
+
         self._gaps_table.set_rows(controllers.gap_rows(result.gaps))
         self._overlaps_table.set_rows(controllers.overlap_rows(result.overlaps))
         self._duplicates_table.set_rows(
@@ -470,12 +596,46 @@ class App:
         # Switch focus to Gap Violations tab
         self.notebook.select(0)
         self._set_action_buttons_enabled(True)
+
+        # US4: compute grade from the result.
+        counts = {
+            "gaps": len(result.gaps),
+            "overlaps": len(result.overlaps),
+            "duplicate_layers": len(result.duplicate_layers),
+            "misalignments": len(result.misalignments),
+            "h_spacing": len(result.h_spacing),
+        }
+        letter, _score = grade.compute(counts)
+        self._grade_var.set(letter)
+        try:
+            self._grade_label.configure(foreground=grade.color_for(letter))
+        except Exception:  # noqa: BLE001
+            pass
+
+        # US2: enable Export-all once we have results.
+        try:
+            self._btn_export_zip.state(["!disabled"])
+        except Exception:  # noqa: BLE001
+            pass
+
+        # US3: now that a report is loaded, enable Watch toggle.
+        try:
+            self._btn_watch.state(["!disabled"])
+        except Exception:  # noqa: BLE001
+            pass
+
+        # US7: refresh undo button state.
+        self._refresh_undo_button()
+
+        # FR-026: re-snapshot watch baseline so this run's writes don't re-fire.
+        self._refresh_watch_baseline()
+
         self._set_status(
             f"Done — {len(result.gaps)} gaps, "
             f"{len(result.overlaps)} overlaps, "
             f"{len(result.duplicate_layers)} duplicates, "
             f"{len(result.misalignments)} misalignments, "
-            f"{len(result.h_spacing)} h-spacing issues."
+            f"{len(result.h_spacing)} h-spacing issues. [{letter}]"
         )
 
     def _on_validate_error(self, exc: BaseException) -> None:
@@ -681,6 +841,11 @@ class App:
                 f"{applied} applied, {skipped} skipped, "
                 "0 remaining (re-run Fix for a fresh plan)."
             )
+            # US7: a fix was just applied → undo backup now exists.
+            try:
+                self._refresh_undo_button()
+            except Exception:  # noqa: BLE001
+                pass
             self._set_status("Re-validating after fix…")
             # Auto-rerun validate (FR-019)
             workers.run_in_background(
@@ -712,6 +877,257 @@ class App:
         self._set_action_buttons_enabled(True)
         widgets.show_error(self.root, "Fix failed", str(exc))
         self._set_status(f"Error: {exc}")
+
+    # =====================================================================
+    # 005 Power Features — handlers
+    # =====================================================================
+
+    # ---- Side panel (US5) -----------------------------------------------
+
+    def _set_default_sash(self) -> None:
+        """Place the PanedWindow sash so the right pane is ~360 px wide."""
+        try:
+            total = self._paned.winfo_width()
+            if total > 400 and self._panel_visible:
+                self._paned.sashpos(0, max(total - 360, 200))
+        except Exception:  # noqa: BLE001 — Tk geometry quirks are non-fatal
+            pass
+
+    def _side_panel_set(self, text: str) -> None:
+        """Replace the side-panel text content (read-only Text widget)."""
+        w = getattr(self, "_side_panel_text", None)
+        if w is None:
+            return
+        try:
+            w.configure(state="normal")
+            w.delete("1.0", "end")
+            w.insert("1.0", text)
+            w.configure(state="disabled")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_toggle_panel(self) -> None:
+        self._panel_visible = not self._panel_visible
+        if self._panel_visible:
+            try:
+                self._paned.add(self._panel_frame, weight=1)
+            except Exception:  # noqa: BLE001
+                pass
+            self._btn_panel.configure(text="Hide panel")
+            self.root.after(50, self._set_default_sash)
+        else:
+            try:
+                self._paned.forget(self._panel_frame)
+            except Exception:  # noqa: BLE001
+                pass
+            self._btn_panel.configure(text="Show panel")
+        try:
+            recents.record(side_panel_visible=self._panel_visible)
+        except Exception:  # noqa: BLE001 — recents must never break the app
+            pass
+
+    def _bind_side_panel_select(
+        self, table: widgets.ResultTable, columns: tuple[str, ...]
+    ) -> None:
+        """Populate the side panel from the focused row in this table."""
+        def _on_select(_event: object, t: widgets.ResultTable = table, cols: tuple[str, ...] = columns) -> None:
+            if not self._panel_visible:
+                return
+            tree = t.tree
+            iid = tree.focus()
+            if not iid:
+                self._side_panel_set("(select a row in any issue tab to drill in)")
+                return
+            try:
+                idx = tree.index(iid)
+            except Exception:  # noqa: BLE001
+                return
+            rows = t.get_rows()
+            if not (0 <= idx < len(rows)):
+                return
+            try:
+                visuals = panel.find_visual_for_row(
+                    rows, idx, cols, self._visuals_by_id
+                )
+            except Exception:  # noqa: BLE001
+                visuals = []
+            if not visuals:
+                self._side_panel_set("(no underlying visual found for this row)")
+                return
+            blocks: list[str] = []
+            for v in visuals:
+                ctx = panel.extract_visual_context(v)
+                lines = [
+                    f"id:               {ctx['id']}",
+                    f"page_id:          {ctx['page_id']}",
+                    f"page_display:     {ctx['page_display_name']}",
+                    f"visual_type:      {ctx['visual_type']}",
+                    f"x, y:             {ctx['x']}, {ctx['y']}",
+                    f"width x height:   {ctx['width']} x {ctx['height']}",
+                    f"parent_group:     {ctx['parent_group']}",
+                    "",
+                    "raw JSON:",
+                    ctx["raw_json"],
+                ]
+                blocks.append("\n".join(lines))
+            self._side_panel_set("\n\n--- next visual ---\n\n".join(blocks))
+
+        table.tree.bind("<<TreeviewSelect>>", _on_select, add="+")
+
+    # ---- Double-click open (US1) ----------------------------------------
+
+    def _bind_double_click_open(self, table: widgets.ResultTable) -> None:
+        def _on_dbl(_event: object) -> None:
+            if self.report_path is None:
+                return
+            ok, msg = controllers.open_in_power_bi(self.report_path)
+            if not ok:
+                from tkinter import messagebox
+
+                messagebox.showinfo(
+                    title="Cannot open in Power BI Desktop",
+                    message=msg,
+                    parent=self.root,
+                )
+
+        table.tree.bind("<Double-Button-1>", _on_dbl, add="+")
+
+    # ---- Export all (CSV ZIP) (US2) -------------------------------------
+
+    def _on_export_zip(self) -> None:
+        if self.last_result is None:
+            widgets.show_error(self.root, "No results", "Run Validate first.")
+            return
+        from datetime import datetime
+
+        report_basename = (
+            self.report_path.name if self.report_path is not None else "report"
+        )
+        default_name = (
+            f"{report_basename}_validation_"
+            f"{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+        )
+        dest = self._filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Export all (CSV ZIP)",
+            defaultextension=".zip",
+            initialfile=default_name,
+            filetypes=[("ZIP archive", "*.zip"), ("All files", "*.*")],
+        )
+        if not dest:
+            return
+        try:
+            controllers.export_all_zip(
+                self.last_result, getattr(self, "_fix_plan", None), Path(dest)
+            )
+        except controllers.NothingToExportError:
+            from tkinter import messagebox
+
+            messagebox.showinfo(
+                title="Nothing to export",
+                message="All result tabs are empty.",
+                parent=self.root,
+            )
+            return
+        except OSError as exc:
+            widgets.show_error(self.root, "Export failed", str(exc))
+            return
+        self._set_status(f"Exported all tabs to {dest}")
+
+    # ---- Watch mode (US3) -----------------------------------------------
+
+    def _on_toggle_watch(self) -> None:
+        self._watch_on = bool(self._watch_var.get())
+        if self._watch_on and self.report_path is not None:
+            try:
+                self._watch_state = watch.snapshot_mtimes(self.report_path)
+            except Exception:  # noqa: BLE001
+                self._watch_state = {}
+            self._set_status("Watching: ON (last check just now)")
+            self.root.after(2000, self._watch_tick)
+        else:
+            self._set_status("Watch: OFF")
+
+    def _watch_tick(self) -> None:
+        if not self._watch_on or self.report_path is None:
+            return
+        try:
+            current = watch.snapshot_mtimes(self.report_path)
+        except Exception:  # noqa: BLE001 — non-fatal per FR-025
+            current = {}
+        if current and watch.diff_mtimes(self._watch_state, current):
+            self._watch_state = current
+            self._set_status("Watching: ON (changes detected — re-validating…)")
+            self._on_validate()  # _on_validate_done resets the snapshot anyway
+        else:
+            self._watch_state = current or self._watch_state
+            self._set_status("Watching: ON (last check just now)")
+        self.root.after(2000, self._watch_tick)
+
+    def _refresh_watch_baseline(self) -> None:
+        """Re-snapshot mtimes after every Validate run (FR-026)."""
+        if self.report_path is None:
+            return
+        try:
+            self._watch_state = watch.snapshot_mtimes(self.report_path)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---- Profile dropdown (US6) -----------------------------------------
+
+    def _refresh_profile_combobox(self) -> None:
+        try:
+            avail = profiles.list_profiles(self.report_path)
+        except Exception:  # noqa: BLE001
+            avail = {"Standard": Path("standard.md")}
+        # Pin order: Standard, Strict, Relaxed, Report-default (when present)
+        ordered: list[str] = []
+        for name in ("Standard", "Strict", "Relaxed", "Report-default"):
+            if name in avail:
+                ordered.append(name)
+        self._profile_combo["values"] = ordered
+        if self._profile_name not in ordered:
+            self._profile_name = "Standard"
+            self._profile_var.set("Standard")
+
+    def _on_profile_changed(self, _event: object = None) -> None:
+        new_name = self._profile_var.get()
+        if not new_name:
+            return
+        self._profile_name = new_name
+        try:
+            recents.record(profile=new_name)
+        except Exception:  # noqa: BLE001
+            pass
+        if self.report_path is not None:
+            self._on_validate()
+
+    # ---- Undo last fix (US7) --------------------------------------------
+
+    def _on_undo_last(self) -> None:
+        if self.report_path is None:
+            return
+        ok, msg, _modified = undo.restore_last_fix(self.report_path)
+        if not ok:
+            widgets.show_error(self.root, "Undo failed", msg)
+            return
+        self._set_status(f"Undo applied — {msg}")
+        self._refresh_undo_button()
+        # Re-run Validate to refresh results
+        self._on_validate()
+
+    def _refresh_undo_button(self) -> None:
+        try:
+            present = (
+                self.report_path is not None
+                and undo.has_backup(self.report_path)
+            )
+        except Exception:  # noqa: BLE001
+            present = False
+        if present:
+            self._btn_undo.state(["!disabled"])
+        else:
+            self._btn_undo.state(["disabled"])
 
 
 def main(argv: list[str] | None = None) -> int:

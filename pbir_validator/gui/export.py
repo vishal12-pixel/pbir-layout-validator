@@ -6,9 +6,29 @@ Pure stdlib. No Tk imports — independently unit-testable.
 from __future__ import annotations
 
 import csv
+import io
 import json
 from pathlib import Path
 from typing import Sequence
+
+
+def _table_to_csv_bytes(
+    headers: Sequence[str],
+    rows: Sequence[Sequence[object]],
+) -> bytes:
+    """Render headers + rows to UTF-8 CSV bytes.
+
+    Used by both the per-tab Export button (via :func:`write_csv`) and the
+    new ZIP-of-CSVs aggregator in :mod:`pbir_validator.gui.controllers`
+    so per-tab parity is structural, not duplicated. Empty-row tables
+    still emit the header line.
+    """
+    buf = io.StringIO(newline="")
+    writer = csv.writer(buf)
+    writer.writerow(list(headers))
+    for row in rows:
+        writer.writerow(["" if v is None else str(v) for v in row])
+    return buf.getvalue().encode("utf-8")
 
 
 def write_csv(
@@ -23,11 +43,7 @@ def write_csv(
     "None".
     """
     path = Path(path)
-    with path.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(list(headers))
-        for row in rows:
-            writer.writerow(["" if v is None else str(v) for v in row])
+    path.write_bytes(_table_to_csv_bytes(headers, rows))
 
 
 def write_json(

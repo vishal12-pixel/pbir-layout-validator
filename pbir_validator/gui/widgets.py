@@ -193,6 +193,40 @@ def show_error(parent: tk.Misc, title: str, message: str) -> None:
     messagebox.showerror(title=title, message=message, parent=parent)
 
 
+def make_readonly_text(parent: tk.Misc) -> tk.Text:
+    """Return a read-only ``tk.Text`` widget with monospace font (US5).
+
+    The widget is wrapped in a frame with a vertical scrollbar; the
+    returned ``Text`` exposes ``set_content(str)`` for callers that wish
+    to update the displayed value while preserving the read-only state.
+    """
+    frame = ttk.Frame(parent)
+    frame.pack_propagate(False)
+    text = tk.Text(
+        frame,
+        wrap="word",
+        font=("Consolas", 9),
+        background="#fafafa",
+        relief="flat",
+        borderwidth=0,
+    )
+    sb = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+    text.configure(yscrollcommand=sb.set, state="disabled")
+    sb.pack(side="right", fill="y")
+    text.pack(side="left", fill="both", expand=True)
+
+    def set_content(s: str) -> None:
+        text.configure(state="normal")
+        text.delete("1.0", "end")
+        text.insert("1.0", s)
+        text.configure(state="disabled")
+
+    text.set_content = set_content  # type: ignore[attr-defined]
+    # Re-parent the text widget through the frame for grid/pack callers.
+    text.pack = frame.pack  # type: ignore[assignment]
+    return text
+
+
 def make_export_button(
     parent: tk.Misc,
     *,
