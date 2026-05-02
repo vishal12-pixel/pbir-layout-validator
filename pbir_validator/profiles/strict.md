@@ -1,4 +1,5 @@
 # Strict profile — half the Standard tolerances
+# hspacing_fix = true
 
 Halves the Standard thresholds for tighter layout discipline:
 

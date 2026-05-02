@@ -14,26 +14,149 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from . import ui
 from .analyzer import compute_gaps, group_into_rows
 from .errors import WriteError
-from .models import GapRule, Page, Report, Shift, Violation
+from .models import GapRule, HSpacingIssue, Page, Report, Shift, Violation, Visual
 from .reader import iter_pages, iter_visuals
 from .validator import validate_report
 from .writer import write_visual_json
 
 
+def plan_hspacing_fixes(
+    pages_by_id: dict[str, Page],
+    visuals_by_page: dict[str, list[Visual]],
+    hspacing_issues: Iterable[HSpacingIssue],
+) -> tuple[list[Shift], list[tuple[HSpacingIssue, str]]]:
+    """Plan X-shifts that equalize horizontal gaps to the modal value.
+
+    Groups ``hspacing_issues`` by ``(page_id, row_index, visual_type)`` and
+    computes cumulative left-to-right corrections per FR-001. When any
+    affected visual would land at ``x < 0`` or ``x + width > page.width``,
+    the entire group is marked unfixable and zero shifts are emitted for it
+    (FR-005, FR-006).
+
+    Returns ``(shifts, unfixable)`` where ``unfixable`` is a list of
+    ``(issue, reason)`` tuples — one per HSpacingIssue in an unfixable group.
+    """
+    issues_by_group: dict[
+        tuple[str, int, str], list[HSpacingIssue]
+    ] = defaultdict(list)
+    for issue in hspacing_issues:
+        key = (issue.page_id, issue.row_index, issue.visual_type)
+        issues_by_group[key].append(issue)
+
+    shifts: list[Shift] = []
+    unfixable: list[tuple[HSpacingIssue, str]] = []
+
+    for (page_id, row_index, visual_type), group in issues_by_group.items():
+        page = pages_by_id.get(page_id)
+        if page is None:
+            continue
+        page_visuals = visuals_by_page.get(page_id, [])
+
+        # Reconstruct the type-bucket peer list for this row.
+        rows = group_into_rows(page_visuals)
+        if row_index >= len(rows):
+            continue
+        row = rows[row_index]
+        peers = sorted(
+            (v for v in row.visuals if v.visual_type == visual_type),
+            key=lambda v: v.x,
+        )
+        if len(peers) < 3:
+            continue
+
+        # Build map of (left_id, right_id) → deviation for fast lookup.
+        dev_by_pair: dict[tuple[str, str], float] = {}
+        modal_gap = group[0].expected_gap_px
+        for issue in group:
+            dev_by_pair[(issue.left_visual_id, issue.right_visual_id)] = (
+                issue.deviation_px
+            )
+
+        # Walk gaps left-to-right, accumulating cumulative correction.
+        cumulative_correction = 0.0
+        delta_by_visual: dict[str, float] = {p.id: 0.0 for p in peers}
+        for left, right in zip(peers, peers[1:]):
+            dev = dev_by_pair.get((left.id, right.id), 0.0)
+            if abs(dev) > 0:
+                cumulative_correction += -dev
+            # `right` and every peer further right is shifted by the
+            # cumulative correction to date.
+            delta_by_visual[right.id] = cumulative_correction
+
+        # Boundary check: if any peer's resulting x would exit the page,
+        # mark the entire group unfixable (FR-005, FR-006).
+        unfixable_reason: str | None = None
+        for peer in peers:
+            d = delta_by_visual[peer.id]
+            if d == 0:
+                continue
+            new_x = peer.x + d
+            if new_x < 0:
+                unfixable_reason = (
+                    f"shift would push '{peer.id}' past left edge "
+                    f"(x={new_x:g})"
+                )
+                break
+            if page.width > 0 and new_x + peer.width > page.width:
+                unfixable_reason = (
+                    f"shift would push '{peer.id}' past page right "
+                    f"({new_x + peer.width:g} > {page.width:g})"
+                )
+                break
+
+        if unfixable_reason is not None:
+            for issue in group:
+                unfixable.append((issue, unfixable_reason))
+            continue
+
+        # Emit one Shift per peer with non-zero delta_x. Y is unchanged.
+        # Modal gap consumed via `modal_gap`/`row` references for type-checker
+        # friendliness; values are not stored on the Shift.
+        _ = (modal_gap, row)
+        for peer in peers:
+            d = delta_by_visual[peer.id]
+            if d == 0:
+                continue
+            new_x = peer.x + d
+            shifts.append(
+                Shift(
+                    visual_id=peer.id,
+                    page_id=page.id,
+                    path=peer.path,
+                    old_y=peer.y,
+                    new_y=peer.y,
+                    delta_y=0.0,
+                    group_member=peer.parent_group_name is not None,
+                    old_x=peer.x,
+                    new_x=new_x,
+                    delta_x=d,
+                )
+            )
+
+    return shifts, unfixable
+
+
 def plan_fixes(
     report: Report,
     rules: dict[tuple[str, str], GapRule],
+    *,
+    profile_flags: Mapping[str, bool] | None = None,
 ) -> tuple[list[Shift], list[Violation]]:
     """Plan all shifts for ``report`` against ``rules``.
 
     Returns ``(shifts, violations)`` where each ``Violation`` may have
     ``unfixable_reason`` set when its planned shift would push a visual past
     the page boundary.
+
+    When ``profile_flags['hspacing_fix']`` is truthy, X-shifts to equalize
+    horizontal gaps are also planned (FR-011) and merged into the returned
+    ``shifts`` list. Otherwise the function's output is byte-identical to
+    the pre-feature behavior (FR-013).
     """
     all_shifts: list[Shift] = []
     final_violations: list[Violation] = []
@@ -44,7 +167,7 @@ def plan_fixes(
     for page in pages_by_id.values():
         visuals_by_page[page.id] = list(iter_visuals(page))
 
-    violations, _unknowns, misalignments, _hspacing, _dups = validate_report(report, rules)
+    violations, _unknowns, misalignments, hspacing_issues, _dups = validate_report(report, rules)
     by_page: dict[str, list[Violation]] = defaultdict(list)
     for v in violations:
         by_page[v.page_id].append(v)
@@ -192,6 +315,13 @@ def plan_fixes(
                 )
             )
 
+    # H-spacing fix pass — only when the active profile opts in (FR-011).
+    if profile_flags and profile_flags.get("hspacing_fix"):
+        x_shifts, _x_unfixable = plan_hspacing_fixes(
+            pages_by_id, visuals_by_page, hspacing_issues
+        )
+        all_shifts.extend(x_shifts)
+
     return all_shifts, final_violations
 
 
@@ -207,7 +337,7 @@ def apply_shifts(shifts: Iterable[Shift], visual_lookup: dict[Path, object]) -> 
             raise WriteError(
                 f"no Visual found for shift target {s.path}", path=s.path
             )
-        write_visual_json(v, s.new_y)  # type: ignore[arg-type]
+        write_visual_json(v, s.new_y, new_x=s.new_x)  # type: ignore[arg-type]
 
 
 def apply_plan(report: Report, shifts: Iterable[Shift]) -> None:

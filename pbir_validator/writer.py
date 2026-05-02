@@ -1,7 +1,8 @@
 """Atomic JSON writer for ``visual.json`` mutations.
 
-Mutates only ``position.y`` per :class:`models.Visual`. All other keys, key order,
-indentation, and trailing newline are preserved (Principle II + FR-010).
+Mutates ``position.y`` (always) and optionally ``position.x`` per :class:`models.Visual`.
+All other keys, key order, indentation, and trailing newline are preserved
+(Principle II + FR-010, FR-014).
 """
 
 from __future__ import annotations
@@ -15,8 +16,18 @@ from .errors import WriteError
 from .models import Visual
 
 
-def write_visual_json(visual: Visual, new_y: float) -> None:
+def write_visual_json(
+    visual: Visual,
+    new_y: float,
+    *,
+    new_x: float | None = None,
+) -> None:
     """Atomically write ``visual.path`` with ``position.y = new_y``.
+
+    When ``new_x`` is provided, ``position.x`` is mutated in the same atomic
+    write (FR-003, FR-004). When ``new_x is None`` (default), only
+    ``position.y`` is touched — byte-identical to the pre-feature behavior
+    so existing Y-only callers see no change (FR-013).
 
     Strategy: copy of ``visual.raw`` → mutate → serialize → temp file in the same
     directory → ``fsync`` → ``os.replace``. ``os.replace`` is atomic on POSIX and
@@ -35,6 +46,12 @@ def write_visual_json(visual: Visual, new_y: float) -> None:
     # Preserve int-ness when new_y is integral so we don't churn `100` → `100.0`.
     if float(new_y).is_integer():
         position["y"] = int(new_y)
+
+    # Optional X mutation — preserve int-ness identically to Y (FR-014).
+    if new_x is not None:
+        position["x"] = new_x
+        if float(new_x).is_integer():
+            position["x"] = int(new_x)
 
     text = json.dumps(data, indent=visual.indent, ensure_ascii=False)
     if visual.trailing_newline:

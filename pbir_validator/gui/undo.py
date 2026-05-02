@@ -57,14 +57,20 @@ def record_pre_fix(report_root: Path | str, plan: Sequence) -> Path:
 
     shifts: list[dict] = []
     for s in plan:
-        shifts.append(
-            {
-                "path": _to_posix_relative(root, Path(getattr(s, "path"))),
-                "visual_id": getattr(s, "visual_id"),
-                "old_y": float(getattr(s, "old_y")),
-                "new_y": float(getattr(s, "new_y")),
-            }
-        )
+        entry: dict = {
+            "path": _to_posix_relative(root, Path(getattr(s, "path"))),
+            "visual_id": getattr(s, "visual_id"),
+            "old_y": float(getattr(s, "old_y")),
+            "new_y": float(getattr(s, "new_y")),
+        }
+        # Optional X coordinates — only emit when this shift mutated X
+        # (FR-007). Pre-feature backups remain byte-identical.
+        old_x = getattr(s, "old_x", None)
+        new_x = getattr(s, "new_x", None)
+        if old_x is not None and new_x is not None:
+            entry["old_x"] = float(old_x)
+            entry["new_x"] = float(new_x)
+        shifts.append(entry)
     payload = {"applied_at": _utc_now_iso(), "shifts": shifts}
     text = json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
     data = (text + "\n").encode("utf-8")
@@ -154,8 +160,15 @@ def restore_last_fix(report_root: Path | str) -> tuple[bool, str, list[str]]:
         v = visual_lookup.get(rel_path)
         if v is None:
             return (False, f"visual not found for backup path: {rel_path}", modified)
+        # Restore X if and only if the backup recorded it (FR-008). Backups
+        # without ``old_x`` were Y-only — pass ``new_x=None`` to keep
+        # byte-identical behavior with pre-feature backups.
+        old_x_raw = entry.get("old_x") if isinstance(entry, dict) else None
+        new_x_arg: float | None = (
+            float(old_x_raw) if old_x_raw is not None else None
+        )
         try:
-            write_visual_json(v, float(old_y))  # type: ignore[arg-type]
+            write_visual_json(v, float(old_y), new_x=new_x_arg)  # type: ignore[arg-type]
         except Exception as exc:  # noqa: BLE001 — abort; leave backup on disk
             return (
                 False,

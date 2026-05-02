@@ -232,17 +232,40 @@ def print_shift_plan(shifts: Iterable[object]) -> None:
     rows = []
     for s in shifts:
         note = "(group)" if getattr(s, "group_member", False) else ""
-        rows.append(
-            (
-                getattr(s, "page_id"),
-                getattr(s, "visual_id"),
-                f"{getattr(s, 'old_y'):g}",
-                f"{getattr(s, 'new_y'):g}",
-                f"{getattr(s, 'delta_y'):+g}",
-                note,
+        delta_x = getattr(s, "delta_x", None)
+        old_x = getattr(s, "old_x", None)
+        new_x = getattr(s, "new_x", None)
+        delta_y = getattr(s, "delta_y", 0)
+        has_y = delta_y != 0
+        has_x = delta_x is not None and delta_x != 0
+        if has_y or not has_x:
+            rows.append(
+                (
+                    getattr(s, "page_id"),
+                    getattr(s, "visual_id"),
+                    "shift-y",
+                    f"{getattr(s, 'old_y'):g}",
+                    f"{getattr(s, 'new_y'):g}",
+                    f"{delta_y:+g}",
+                    note,
+                )
             )
-        )
-    print_table(rows, ["Page", "Visual", "Old Y", "New Y", "Delta", "Note"])
+        if has_x:
+            rows.append(
+                (
+                    getattr(s, "page_id"),
+                    getattr(s, "visual_id"),
+                    "shift-x",
+                    f"{old_x:g}",
+                    f"{new_x:g}",
+                    f"{delta_x:+g}",
+                    note,
+                )
+            )
+    print_table(
+        rows,
+        ["Page", "Visual", "Action", "Old", "New", "Delta", "Note"],
+    )
 
 
 def print_unfixable(violations: Iterable[object]) -> None:

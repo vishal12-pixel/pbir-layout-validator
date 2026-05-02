@@ -1,0 +1,15 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.8.0/schema.json",
+  "name": "c3_card",
+  "position": {
+    "x": 1190,
+    "y": 100,
+    "z": 1002,
+    "height": 30,
+    "width": 30,
+    "tabOrder": 200
+  },
+  "visual": {
+    "visualType": "card"
+  }
+}

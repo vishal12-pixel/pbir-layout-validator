@@ -468,29 +468,78 @@ class FixPlan:
 FIX_PLAN_COLUMNS: tuple[str, ...] = (
     "page_id",
     "visual_id",
+    "action",
     "old_y",
     "new_y",
     "delta_y",
+    "old_x",
+    "new_x",
+    "delta_x",
     "group_member",
 )
 
 
 def fix_plan_rows(plan: FixPlan) -> list[tuple[object, ...]]:
-    return [
-        (
-            ps.shift.page_id,
-            ps.shift.visual_id,
-            ps.shift.old_y,
-            ps.shift.new_y,
-            ps.shift.delta_y,
-            "yes" if ps.shift.group_member else "no",
-        )
-        for ps in plan.shifts
-    ]
+    """Build display rows for the Fix Plan tab.
+
+    A shift that mutates both Y and X (rare but possible if combined with a
+    future feature) emits TWO rows: one ``shift-y`` and one ``shift-x``. A
+    pure Y shift (delta_x is None or 0) emits a single ``shift-y`` row with
+    empty X cells. A pure X shift emits a single ``shift-x`` row with empty
+    Y cells (FR-009, C4).
+    """
+    rows: list[tuple[object, ...]] = []
+    for ps in plan.shifts:
+        sh = ps.shift
+        has_y = sh.delta_y != 0
+        has_x = sh.delta_x is not None and sh.delta_x != 0
+        gm = "yes" if sh.group_member else "no"
+        if has_y or not has_x:
+            rows.append(
+                (
+                    sh.page_id,
+                    sh.visual_id,
+                    "shift-y",
+                    sh.old_y,
+                    sh.new_y,
+                    sh.delta_y,
+                    "",
+                    "",
+                    "",
+                    gm,
+                )
+            )
+        if has_x:
+            rows.append(
+                (
+                    sh.page_id,
+                    sh.visual_id,
+                    "shift-x",
+                    "",
+                    "",
+                    "",
+                    sh.old_x,
+                    sh.new_x,
+                    sh.delta_x,
+                    gm,
+                )
+            )
+    return rows
 
 
-def fix_plan(report_path: Path | str, conf_path: Path | str | None) -> FixPlan:
-    """Run the fixer in dry-run mode and return a :class:`FixPlan`."""
+def fix_plan(
+    report_path: Path | str,
+    conf_path: Path | str | None,
+    *,
+    profile_name: str | None = None,
+) -> FixPlan:
+    """Run the fixer in dry-run mode and return a :class:`FixPlan`.
+
+    ``profile_name`` selects the active profile so optional behavior flags
+    (currently ``hspacing_fix``) flow through to :func:`plan_fixes`. When
+    ``None``, no flags are passed and the fixer behaves identically to the
+    pre-feature default (FR-013).
+    """
     from ..conf import parse_conf
     from ..errors import ConfParseError, NotAPbirError
     from ..fixer import plan_fixes
@@ -509,8 +558,17 @@ def fix_plan(report_path: Path | str, conf_path: Path | str | None) -> FixPlan:
     except ConfParseError as exc:
         raise FixError(str(exc)) from exc
 
+    flags: Mapping[str, bool] | None = None
+    if profile_name is not None:
+        from . import profiles as _profiles
+
+        try:
+            flags = _profiles.load_profile_flags(profile_name, report.root)
+        except Exception:  # noqa: BLE001 - flags are best-effort
+            flags = None
+
     try:
-        shifts, violations = plan_fixes(report, rules)
+        shifts, violations = plan_fixes(report, rules, profile_flags=flags)
     except Exception as exc:  # noqa: BLE001
         raise FixError(f"fix planning failed: {exc}") from exc
 

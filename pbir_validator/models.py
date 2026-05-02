@@ -164,3 +164,8 @@ class Shift:
     new_y: float
     delta_y: float
     group_member: bool = False
+    # Optional X-shift fields (FR-016). Populated for h-spacing fixes; left
+    # ``None`` for Y-only shifts so existing consumers see no behavior change.
+    old_x: float | None = None
+    new_x: float | None = None
+    delta_x: float | None = None
