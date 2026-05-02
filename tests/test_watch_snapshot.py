@@ -67,12 +67,17 @@ def test_snapshot_skips_disappearing_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """File vanishes between iter and stat — must NOT raise."""
+    import errno
+
     pbir = _touch(tmp_path / "definition.pbir")
     real_stat = Path.stat
 
     def flaky_stat(self: Path):
         if self.name == "definition.pbir":
-            raise FileNotFoundError("vanished")
+            # errno=ENOENT is required so pathlib's Path.is_file() recognises
+            # this as a "vanished" file and silently returns False on Python
+            # 3.11/3.12 (where is_file delegates to self.stat()).
+            raise FileNotFoundError(errno.ENOENT, "vanished")
         return real_stat(self)
 
     monkeypatch.setattr(Path, "stat", flaky_stat)
