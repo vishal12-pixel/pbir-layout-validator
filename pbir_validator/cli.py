@@ -86,6 +86,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Apply changes without an interactive prompt.",
     )
     p_fix.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
+    p_fix.add_argument(
+        "--profile",
+        default=None,
+        help=(
+            "Profile name (Strict/Standard/Relaxed) used to load optional "
+            "behavior flags such as 'hspacing_fix'. Defaults to no profile, "
+            "preserving pre-feature behavior."
+        ),
+    )
     p_fix.set_defaults(func=_run_fix)
 
     return parser
@@ -258,7 +267,17 @@ def _run_fix(args: argparse.Namespace) -> int:
     print(f"Using rules from: {conf_path}")
     print()
 
-    shifts, violations = plan_fixes(report, rules)
+    profile_flags = None
+    profile_name = getattr(args, "profile", None)
+    if profile_name:
+        try:
+            from .gui.profiles import load_profile_flags
+
+            profile_flags = load_profile_flags(profile_name, report.root)
+        except Exception:  # noqa: BLE001 — flags are best-effort
+            profile_flags = None
+
+    shifts, violations = plan_fixes(report, rules, profile_flags=profile_flags)
 
     if violations:
         ui.print_violations_table(violations)

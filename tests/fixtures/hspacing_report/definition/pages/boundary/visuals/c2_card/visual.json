@@ -1,0 +1,15 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/visualContainer/2.8.0/schema.json",
+  "name": "c2_card",
+  "position": {
+    "x": 1140,
+    "y": 100,
+    "z": 1001,
+    "height": 30,
+    "width": 30,
+    "tabOrder": 100
+  },
+  "visual": {
+    "visualType": "card"
+  }
+}
